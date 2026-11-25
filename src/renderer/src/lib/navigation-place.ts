@@ -14,7 +14,7 @@ import type { LinkedDocument } from '../../../shared/linked-documents'
 import { setActiveWorkspace } from './workspace-actions'
 import { getRegisteredTerminal } from './terminal-registry'
 import { EXTENSIONS_SECTION_LABELS, SETTINGS_SECTION_LABELS } from './view-sections'
-import type { BesideCard, Place, PlacePlugin } from './navigation-history'
+import { besideAction, type BesideCard, type Place, type PlacePlugin } from './navigation-history'
 
 /**
  * A place read off the stores and put back on them (PRDCT-5155): the
@@ -164,10 +164,12 @@ function applyPlugin(plugin: PlacePlugin | null): void {
  *  (`latest-opened-wins.ts`, left as it is): an artefact put back also hides the session's
  *  visible document here, at once, so the place read right after the restore is the settled
  *  one; a document put back is enough by itself, since the document is what the pane draws
- *  first. */
+ *  first. A card showing now that the person has not `seen` (an agent opened it while another
+ *  place was on screen) is left as it is: no hide, no pick, no document update. */
 async function applyBeside(
   beside: Record<string, BesideCard | null>,
-  live: readonly string[]
+  live: readonly string[],
+  seen: (card: BesideCard) => boolean
 ): Promise<void> {
   const documents = useLinkedDocumentStore.getState().documents
   const updates: Array<Promise<LinkedDocument>> = []
@@ -177,6 +179,9 @@ async function applyBeside(
   for (const sessionId of live) {
     if (!Object.hasOwn(beside, sessionId)) continue
     const card = beside[sessionId]
+    // What shows now, read as `readPlace` reads it: the visible document first, then the
+    // shown artefact.
+    if (besideAction(card, cardBeside(sessionId), seen) === 'leave') continue
     const visible = documents.filter((d) => d.sessionId === sessionId && !d.hidden)
     if (card === null) {
       const { artefacts, hidden, setHidden } = useArtefactStore.getState()
@@ -220,11 +225,11 @@ async function applyBeside(
 /**
  * Show the place again: its workspace first (the switch tells main before anything changes
  * in the window), then its tabs and the one focused, the group's or tab's page over them,
- * the view, the plugin covering the column, and what showed beside the tab. What is gone is
- * left out; the caller reads back what actually showed. False when the workspace could not
- * be switched to: then nothing changed.
+ * the view, the plugin covering the column, and what showed beside the tab, unless a card the
+ * person has not `seen` shows there now. What is gone is left out; the caller reads back what
+ * actually showed. False when the workspace could not be switched to: then nothing changed.
  */
-export async function applyPlace(p: Place): Promise<boolean> {
+export async function applyPlace(p: Place, seen: (card: BesideCard) => boolean): Promise<boolean> {
   const workspaces = useWorkspaceStore.getState()
   if (
     p.workspaceId !== null &&
@@ -263,7 +268,7 @@ export async function applyPlace(p: Place): Promise<boolean> {
   // did not have. (A place with a card has no plugin: the card shows only uncovered.)
   applyPlugin(p.plugin)
 
-  if (p.beside !== null) await applyBeside(p.beside, live)
+  if (p.beside !== null) await applyBeside(p.beside, live, seen)
   return true
 }
 

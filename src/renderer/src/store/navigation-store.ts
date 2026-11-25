@@ -1,12 +1,14 @@
 import { create } from 'zustand'
 import {
   EMPTY_HISTORY,
+  cardKey,
   isEmptyPlace,
   moveTo,
   recordPlace,
   replaceAt,
   samePlace,
   stepTarget,
+  type BesideCard,
   type NavigationHistory,
   type Place
 } from '../lib/navigation-history'
@@ -43,7 +45,23 @@ let restoring = false
 let timer: ReturnType<typeof setTimeout> | null = null
 /** The place the recorder read last. A change of the stores that leaves it as it was (a
  *  tab's state, a new document of another tab) neither schedules nor delays anything. */
-let seen: Place | null = null
+let lastRead: Place | null = null
+/** The cards beside a tab the person has seen (`cardKey`): each card of a place the recorder
+ *  settled on, and of what a restore showed. A card an agent opened while another place was
+ *  on screen is not among them, and going back leaves it showing (`applyPlace`). */
+const seenCards = new Set<string>()
+
+function noteSeen(place: Place): void {
+  for (const card of Object.values(place.beside ?? {})) if (card) seenCards.add(cardKey(card))
+}
+
+const isSeen = (card: BesideCard): boolean => seenCards.has(cardKey(card))
+
+/** The cards a place shows, by the open that showed each: what `samePlace` leaves out. */
+const shownCards = (place: Place): string =>
+  Object.values(place.beside ?? {})
+    .map((card) => (card ? cardKey(card) : '-'))
+    .join(' ')
 
 function clearTimer(): void {
   if (timer !== null) clearTimeout(timer)
@@ -53,7 +71,9 @@ function clearTimer(): void {
 function commit(): void {
   timer = null
   const place = readPlace()
-  seen = place
+  lastRead = place
+  // On screen long enough to count, as recorded or as the place it is the same as.
+  noteSeen(place)
   const { history } = useNavigationStore.getState()
   const next = recordPlace(history, place)
   if (next !== history) useNavigationStore.setState({ history: next })
@@ -73,12 +93,15 @@ export function recordPendingPlace(): void {
 }
 
 /** One of the watched stores changed: when the place on screen is another one, record it
- *  once it has stayed `SETTLE_MS` (each further change of the place starts the wait over). */
+ *  once it has stayed `SETTLE_MS` (each further change of the place starts the wait over).
+ *  An artefact opened again while it shows is the same place but a new open: it is settled
+ *  the same way, so that the open the person watched counts as seen. */
 function changed(): void {
   if (restoring) return
   const place = readPlace()
-  if (seen !== null && samePlace(place, seen)) return
-  seen = place
+  if (lastRead !== null && samePlace(place, lastRead) && shownCards(place) === shownCards(lastRead))
+    return
+  lastRead = place
   clearTimer()
   timer = setTimeout(commit, SETTLE_MS)
 }
@@ -100,7 +123,7 @@ async function go(index: number): Promise<void> {
     useNavigationStore.setState({ history: moveTo(history, at) })
     let applied: boolean
     try {
-      applied = await applyPlace(target)
+      applied = await applyPlace(target, isSeen)
     } catch (error) {
       // Part of it may be on screen: what shows is recorded below, as for any restore.
       console.error('[navigation] the place could not be shown again:', error)
@@ -112,9 +135,11 @@ async function go(index: number): Promise<void> {
       useNavigationStore.setState({ history: moveTo(now, from) })
       return
     }
-    // What actually showed: a closed tab left out, a stopped plugin's page left out.
+    // What actually showed: a closed tab left out, a stopped plugin's page left out, a card
+    // the person had not seen left showing (seen from now on).
     const shown = readPlace()
-    seen = shown
+    lastRead = shown
+    noteSeen(shown)
     if (!isEmptyPlace(shown)) useNavigationStore.setState({ history: replaceAt(now, at, shown) })
     // Typing goes to the tab shown, as after a click on its row, not to the button that moved.
     focusPlace(shown)

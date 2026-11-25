@@ -105,6 +105,29 @@ function sameBeside(a: Place['beside'], b: Place['beside']): boolean {
   return keys.every((key) => Object.hasOwn(b, key) && sameCard(a[key], b[key]))
 }
 
+/** A card's identity for what the person has seen: an artefact by its target and the open
+ *  that showed it (an agent opening it again shows a new open), a document by its id. */
+export function cardKey(card: BesideCard): string {
+  return card.kind === 'artefact'
+    ? `artefact:${card.id}@${card.openedAt ?? ''}`
+    : `document:${card.id}`
+}
+
+/**
+ * What going to a place does with the card beside a tab: `'leave'` when a card shows now
+ * (`current`) that the person has not seen (an agent opened it while another place was on
+ * screen): it stays, neither hidden nor replaced by the card the place had (`_want`, which
+ * therefore never changes the answer), since it is the agent's output the person comes back
+ * for. `'apply'` otherwise: the place's card, or none, is put back.
+ */
+export function besideAction(
+  _want: BesideCard | null,
+  current: BesideCard | null,
+  seen: (card: BesideCard) => boolean
+): 'leave' | 'apply' {
+  return current !== null && !seen(current) ? 'leave' : 'apply'
+}
+
 /** Every field but the tabs and the focus. */
 function sameSurroundings(a: Place, b: Place): boolean {
   return (

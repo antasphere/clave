@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   EMPTY_HISTORY,
   HISTORY_LIMIT,
+  besideAction,
+  cardKey,
   isCovered,
   isEmptyPlace,
   moveTo,
@@ -11,6 +13,7 @@ import {
   samePlace,
   sameSpot,
   stepTarget,
+  type BesideCard,
   type NavigationHistory,
   type Place,
   type PlacePlugin
@@ -299,6 +302,55 @@ describe('a page over the tabs (PRDCT-5155)', () => {
     const s = recordPlace(walk(before, settings), closed)
     expect(s.entries).toEqual([before, closed])
     expect(s.index).toBe(1)
+  })
+})
+
+describe('the cards beside a tab the person has seen (PRDCT-5155)', () => {
+  const deck: BesideCard = { kind: 'artefact', id: '/work/deck', openedAt: '2026-01-01T10:00:00Z' }
+  const reopened: BesideCard = { ...deck, openedAt: '2026-01-01T11:00:00Z' }
+  const other: BesideCard = {
+    kind: 'artefact',
+    id: '/work/other',
+    openedAt: '2026-01-01T12:00:00Z'
+  }
+  const doc: BesideCard = { kind: 'document', id: 'doc-1' }
+
+  it('keys an artefact by its target and the open that showed it, a document by its id', () => {
+    expect(cardKey(deck)).toBe('artefact:/work/deck@2026-01-01T10:00:00Z')
+    expect(cardKey(doc)).toBe('document:doc-1')
+    // Each open of an artefact is a card of its own; a document is one card, edits and all.
+    expect(cardKey(reopened)).not.toBe(cardKey(deck))
+    expect(cardKey({ ...deck })).toBe(cardKey(deck))
+    expect(cardKey({ ...doc, openedAt: '2026-01-01T10:00:00Z' })).toBe(cardKey(doc))
+    // The same id under the other kind is another card.
+    expect(cardKey({ kind: 'document', id: '/work/deck' })).not.toBe(cardKey(deck))
+  })
+
+  it('leaves a card that shows and was never seen, whatever the place going back wants', () => {
+    const seenOnly =
+      (...cards: BesideCard[]) =>
+      (card: BesideCard): boolean =>
+        cards.some((c) => cardKey(c) === cardKey(card))
+    // An agent opened a deck while the person was elsewhere: Back keeps it, never hides it.
+    expect(besideAction(null, deck, seenOnly())).toBe('leave')
+    // Nor replaces it with the card the place had: the deck it was, or another open of it.
+    expect(besideAction(other, deck, seenOnly(other))).toBe('leave')
+    expect(besideAction(deck, reopened, seenOnly(deck))).toBe('leave')
+    expect(besideAction(doc, deck, seenOnly(doc))).toBe('leave')
+    expect(besideAction(null, doc, seenOnly(deck))).toBe('leave')
+  })
+
+  it('applies the place when what shows was seen, or nothing shows', () => {
+    const all = (): boolean => true
+    const none = (): boolean => false
+    // The person watched the deck open: Back hides it, Forward shows it again.
+    expect(besideAction(null, deck, all)).toBe('apply')
+    expect(besideAction(other, deck, all)).toBe('apply')
+    expect(besideAction(doc, deck, all)).toBe('apply')
+    // Nothing shows: nothing to keep, whatever was seen.
+    expect(besideAction(deck, null, none)).toBe('apply')
+    expect(besideAction(doc, null, none)).toBe('apply')
+    expect(besideAction(null, null, none)).toBe('apply')
   })
 })
 

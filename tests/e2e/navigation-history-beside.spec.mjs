@@ -11,7 +11,10 @@
  * the tab is a real agent tab with its own MCP token, and the document and
  * the artefact arrive through the same tools a real agent calls. An artefact
  * the agent opens AGAIN while it already shows is no move at all: Back from
- * there must still hide it in one step.
+ * there must still hide it in one step. A card the agent opens while the
+ * person is on another tab has not been seen: Back to its tab shows it rather
+ * than hiding it or putting back the deck it replaced, a later click on the
+ * tab's row still shows it, and one the person watched open still steps.
  *
  * The walk of the places themselves (tabs, mosaics, Settings, pages, the
  * list, the keys) is navigation-history.spec.mjs.
@@ -24,6 +27,7 @@ import {
   seedTrustedRoots,
   userDataDir,
   fixturePath,
+  callMcp,
   mcpEndpoint,
   mcpHttpClient,
   spawnAgentTabIn,
@@ -37,6 +41,10 @@ const CLI =
 const DIR = userDataDir('navigation-history-beside')
 const ROOT = fixturePath('navigation-history-beside-root')
 const DECK = `${ROOT}/deck`
+/** Decks the agent opens later; each is named on screen by its folder (the frame's title). */
+const SECOND = `${ROOT}/second`
+const THIRD = `${ROOT}/third`
+const FOURTH = `${ROOT}/fourth`
 const DRAFT = `${ROOT}/draft.md`
 const WS = {
   id: 'cccccccc-0000-4000-8000-000000005155',
@@ -53,6 +61,7 @@ const FORWARD = '[data-nav="forward"]'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+const rowOf = (id) => `[data-sidebar-item-id="${id}"] button.sidebar-item`
 
 const snapshot = (win) => win.evaluate(() => window.__claveNavigationForTests?.snapshot() ?? null)
 
@@ -75,20 +84,22 @@ const trail = (s) =>
       )
     : null
 
-/** What shows: the tab tiles on screen, and whether the document panel and the artefact
- *  panel are visible. */
+/** What shows: the tab tiles on screen, whether the document panel and the artefact panel
+ *  are visible, and which artefact the visible panel frames (its title: the deck's folder). */
 function screen(win) {
   return win.evaluate(() => {
     const shown = (el) =>
       !!el &&
       el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) &&
       el.getBoundingClientRect().width > 0
+    const frames = [...document.querySelectorAll('[data-testid="slideless-artefact"]')]
     return {
       tiles: [...document.querySelectorAll('[data-terminal-tile]')]
         .filter((el) => el.getAttribute('aria-hidden') !== 'true' && shown(el))
         .map((el) => el.getAttribute('data-terminal-tile')),
       document: [...document.querySelectorAll('[data-testid="linked-document-panel"]')].some(shown),
-      artefact: [...document.querySelectorAll('[data-testid="slideless-artefact"]')].some(shown)
+      artefact: frames.some(shown),
+      artefactTitle: frames.find(shown)?.getAttribute('title') ?? null
     }
   })
 }
@@ -107,8 +118,10 @@ export async function run(t) {
   t.check('the Slideless command line to test with exists', existsSync(CLI), CLI)
   if (!existsSync(CLI)) return
   rmSync(ROOT, { recursive: true, force: true })
-  mkdirSync(DECK, { recursive: true })
-  writeFileSync(`${DECK}/index.html`, '<!doctype html><h1 id="t">a deck</h1>')
+  for (const deck of [DECK, SECOND, THIRD, FOURTH]) {
+    mkdirSync(deck, { recursive: true })
+    writeFileSync(`${deck}/index.html`, `<!doctype html><h1 id="t">${path.basename(deck)}</h1>`)
+  }
   writeFileSync(DRAFT, '# A draft\n\nSome words.\n')
   writeFileSync(`${ROOT}/fake-agent.sh`, '#!/bin/sh\nexec sleep 3600\n')
   chmodSync(`${ROOT}/fake-agent.sh`, 0o755)
@@ -252,6 +265,135 @@ export async function run(t) {
       'and the restore records no place of its own',
       s?.places.length === alone + 2 && s.index === alone + 1,
       trail(s)
+    )
+
+    // ── A deck the agent opens while the person is on another tab ─────────
+    // A card is seen once a recorded place has shown it. Going back never hides or replaces
+    // one the person has not seen: it is the agent's output they come back for. Each half
+    // below starts from what the person sees, so each stands on its own.
+    const T = (await callMcp(app, 'openSession', { mode: 'terminal', cwd: ROOT, name: 'Other' }))
+      ?.sessionId
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [T]))
+    t.check('another tab, T, opens', typeof T === 'string' && same(current(s)?.tabs, [T]), trail(s))
+
+    // Over the deck Z showed when the person left: the new one stays.
+    await win.click(rowOf(Z))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [Z]))
+    const deckAt = s?.index
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'deck', 20_000)
+    t.check(
+      'a click on Z’s row: Z with its deck',
+      same(current(s)?.beside, { [Z]: `artefact:${DECK}` }) && seen.artefactTitle === 'deck',
+      { trail: trail(s), seen }
+    )
+    await win.click(rowOf(T))
+    s = await snapshotUntil(win, (x) => x.index === deckAt + 1 && same(current(x)?.tabs, [T]))
+    const second = await client.call('clave_open_artefact', { path: SECOND })
+    t.check('Z’s agent opens another deck while the person is on T', !toolErrored(second), second)
+    await sleep(QUIET_MS)
+    s = await snapshot(win)
+    seen = await screen(win)
+    t.check(
+      'the window stays on T and records nothing',
+      s?.places.length === deckAt + 2 && s.index === deckAt + 1 && same(seen.tiles, [T]),
+      { trail: trail(s), seen }
+    )
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === deckAt)
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'second', 20_000)
+    t.check(
+      'Back shows Z with the new deck, not the one Z showed when the person left',
+      s?.index === deckAt &&
+        same(seen.tiles, [Z]) &&
+        seen.artefactTitle === 'second' &&
+        same(current(s)?.beside, { [Z]: `artefact:${SECOND}` }),
+      { trail: trail(s), seen }
+    )
+    await win.click(rowOf(T))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [T]))
+    await win.click(rowOf(Z))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [Z]))
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'second', 20_000)
+    t.check(
+      'and a later click on Z’s row still shows the new one',
+      same(seen.tiles, [Z]) && seen.artefactTitle === 'second',
+      { trail: trail(s), seen }
+    )
+
+    // Z alone when the person left: Back shows Z WITH the deck its agent opened meanwhile.
+    await win.locator('[data-testid="artefact-panel"] [aria-label="Hide artefact"]').first().click()
+    s = await snapshotUntil(win, (x) => same(current(x)?.beside, { [Z]: null }))
+    const aloneAt = s?.index
+    seen = await screenUntil(win, (x) => !x.artefact)
+    t.check(
+      'the person hides the deck: Z alone, nothing beside it',
+      same(current(s)?.tabs, [Z]) && same(current(s)?.beside, { [Z]: null }) && !seen.artefact,
+      { trail: trail(s), seen }
+    )
+    await win.click(rowOf(T))
+    s = await snapshotUntil(win, (x) => x.index === aloneAt + 1 && same(current(x)?.tabs, [T]))
+    const third = await client.call('clave_open_artefact', { path: THIRD })
+    t.check('Z’s agent opens a deck while the person is on T', !toolErrored(third), third)
+    await sleep(QUIET_MS)
+    s = await snapshot(win)
+    seen = await screen(win)
+    t.check(
+      'the window stays on T and records nothing again',
+      s?.places.length === aloneAt + 2 && s.index === aloneAt + 1 && same(seen.tiles, [T]),
+      { trail: trail(s), seen }
+    )
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === aloneAt)
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'third', 20_000)
+    t.check(
+      'Back shows Z WITH the deck its agent opened meanwhile',
+      s?.index === aloneAt &&
+        same(seen.tiles, [Z]) &&
+        seen.artefactTitle === 'third' &&
+        same(current(s)?.beside, { [Z]: `artefact:${THIRD}` }),
+      { trail: trail(s), seen }
+    )
+    await win.click(rowOf(T))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [T]))
+    await win.click(rowOf(Z))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [Z]))
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'third', 20_000)
+    t.check(
+      'and a later click on Z’s row still shows it',
+      same(seen.tiles, [Z]) && seen.artefactTitle === 'third',
+      { trail: trail(s), seen }
+    )
+
+    // The person watches the next one open: Back puts back the deck before it, Forward the
+    // new one again.
+    const watchedAt = s?.index
+    const fourth = await client.call('clave_open_artefact', { path: FOURTH })
+    t.check('Z’s agent opens a fourth deck while Z shows', !toolErrored(fourth))
+    s = await snapshotUntil(
+      win,
+      (x) => x.index === watchedAt + 1 && current(x)?.beside?.[Z] === `artefact:${FOURTH}`
+    )
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'fourth', 20_000)
+    t.check(
+      'a deck opened while the person watches is a new place',
+      s?.index === watchedAt + 1 && seen.artefactTitle === 'fourth',
+      { trail: trail(s), seen }
+    )
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === watchedAt)
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'third', 20_000)
+    t.check(
+      'Back puts back the deck Z showed before it',
+      s?.index === watchedAt && seen.artefactTitle === 'third',
+      { trail: trail(s), seen }
+    )
+    await win.click(FORWARD)
+    s = await snapshotUntil(win, (x) => x.index === watchedAt + 1)
+    seen = await screenUntil(win, (x) => x.artefactTitle === 'fourth', 20_000)
+    t.check(
+      'and Forward shows the one opened while the person watched',
+      s?.index === watchedAt + 1 && seen.artefactTitle === 'fourth',
+      { trail: trail(s), seen }
     )
   } finally {
     await app.close()
