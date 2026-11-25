@@ -831,11 +831,8 @@ export async function run(t) {
       await waitName(win, g5.id, 'Lumen'),
       'Lumen'
     )
-    t.equal(
-      '5. and the chips go',
-      await until(async () => ((await chipsOf(win, g5.id)).length === 0 ? 0 : null)),
-      0
-    )
+    const gone = await until(async () => ((await chipsOf(win, g5.id)).length === 0 ? true : null))
+    t.check('5. and the chips go', gone === true, await chipsOf(win, g5.id))
     t.check(
       '5. the name is the person’s from then on',
       (await groupsNow(win)).find((g) => g.id === g5.id)?.autoNamed === false
@@ -990,14 +987,16 @@ export async function run(t) {
     const unread = [g6.id, g11.id]
     const unreadNames = new Map()
     for (const id of unread) unreadNames.set(id, await shownName(win, id))
-    const readTabs = [q1, q2, q3, a1, c1, n1, q4, a2, q5, a3]
-    const allTabs = [...readTabs, f1, f2]
+    const readTabs = [q1, q2, q3, a1, c1, n1, q4, q5, a3]
+    // Never read: the tab that joined a group named by hand (road 7), and the
+    // two grouped while switched off and without a key (roads 10 and 11).
+    const neverRead = [a2, f1, f2]
+    const allTabs = [...readTabs, ...neverRead]
     const listedBefore = await listedProjects(await clientOf(n1.id))
     t.check(
-      '12. before the restart, clave_list carries each read tab’s projects',
+      '12. before the restart, clave_list carries each read tab’s projects, and none for the others',
       readTabs.every((tab) => listedBefore.get(tab.id)?.status) &&
-        !listedBefore.get(f1.id) &&
-        !listedBefore.get(f2.id),
+        neverRead.every((tab) => listedBefore.has(tab.id) && !listedBefore.get(tab.id)),
       Object.fromEntries([...listedBefore].filter(([id]) => allTabs.some((tab) => tab.id === id)))
     )
     const before12 = asked()
@@ -1050,6 +1049,11 @@ export async function run(t) {
         JSON.stringify(listedAfter.get(tab.id) ?? null),
         JSON.stringify(listedBefore.get(tab.id) ?? null)
       )
+    t.check(
+      `12. [${MODE}] and the tabs never read still carry none`,
+      neverRead.every((tab) => listedAfter.has(tab.id) && !listedAfter.get(tab.id)),
+      neverRead.map((tab) => [tab.name, listedAfter.get(tab.id) ?? null])
+    )
     t.equal(
       `12. [${MODE}] and the window holds it`,
       (await sessionOf(win, q1.id))?.projects?.picks?.map((p) => p.name).join(),
