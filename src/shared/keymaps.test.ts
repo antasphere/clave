@@ -10,6 +10,7 @@ import {
   keyEventToChord,
   mouseEventToChord,
   overridesFromResolved,
+  type KeyEventLike,
   type MouseEventLike,
   parseKeymapOverrides,
   resolveKeymapConfig
@@ -35,7 +36,7 @@ describe('keymap defaults', () => {
     expect(config.bindings.newPiAtFolder).toEqual(['Mod+Alt+Shift+P'])
     expect(config.bindings.newOpencode).toEqual([])
     expect(config.bindings.newOpencodeAtFolder).toEqual([])
-    expect(KEYMAP_ACTIONS).toHaveLength(48)
+    expect(KEYMAP_ACTIONS).toHaveLength(50)
   })
 
   it('keeps the master key off the chords a terminal owns', () => {
@@ -309,7 +310,7 @@ describe('mouse bindings', () => {
     const master = resolveKeymapConfig().masterKey!
     const matcher = new KeymapMatcher(resolveKeymapConfig())
     expect(matcher.matchMouse('MouseMiddle')).toBe('killFocusedSession')
-    expect(matcher.matchMouse('MouseBack')).toBeNull()
+    expect(matcher.matchMouse('Alt+MouseBack')).toBeNull()
 
     expect(matcher.handleChord(master, 0).kind).toBe('pending')
     expect(matcher.matchMouse('MouseMiddle')).toBe('killFocusedSession')
@@ -320,6 +321,56 @@ describe('mouse bindings', () => {
   it('marks exactly the session actions as acting on the clicked row', () => {
     const targeted = KEYMAP_ACTIONS.filter((action) => action.targetsSession).map((a) => a.id)
     expect(targeted.sort()).toEqual(['archiveAndKillSession', 'killFocusedSession'])
+  })
+})
+
+describe('Back and Forward (PRDCT-5155)', () => {
+  const press = (key: string, code: string, mods: Partial<KeyEventLike> = {}): string | null =>
+    keyEventToChord({
+      key,
+      code,
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      ...mods
+    })
+
+  it('are bound to ⌘[ and ⌘] and to the mouse side buttons, and to nothing else', () => {
+    const config = resolveKeymapConfig()
+    expect(config.bindings.navigateBack).toEqual(['Mod+[', 'MouseBack'])
+    expect(config.bindings.navigateForward).toEqual(['Mod+]', 'MouseForward'])
+    for (const binding of ['Mod+[', 'MouseBack', 'Mod+]', 'MouseForward']) {
+      const owners = KEYMAP_ACTIONS.filter((a) => a.defaultBindings.includes(binding))
+      expect(owners.map((a) => a.id)).toHaveLength(1)
+    }
+    expect(parseKeymapOverrides({ version: 1 }).ok).toBe(true)
+    const back = KEYMAP_ACTIONS.find((a) => a.id === 'navigateBack')
+    expect(back?.label).toBe('Go back')
+    expect(back?.category).toBe('Navigation')
+    expect(formatKeyBinding('Mod+[', 'Mod+K')).toBe('⌘[')
+  })
+
+  it('answer the keys and the side buttons, beside the bracket chords of tabs and workspaces', () => {
+    const matcher = new KeymapMatcher(resolveKeymapConfig())
+    expect(matcher.handleChord(press('[', 'BracketLeft', { metaKey: true })!, 0)).toEqual({
+      kind: 'matched',
+      actionId: 'navigateBack'
+    })
+    expect(matcher.handleChord(press(']', 'BracketRight', { metaKey: true })!, 1)).toEqual({
+      kind: 'matched',
+      actionId: 'navigateForward'
+    })
+    expect(
+      matcher.handleChord(press('{', 'BracketLeft', { metaKey: true, shiftKey: true })!, 2)
+    ).toEqual({ kind: 'matched', actionId: 'previousSession' })
+    expect(
+      matcher.handleChord(press('[', 'BracketLeft', { metaKey: true, ctrlKey: true })!, 3)
+    ).toEqual({ kind: 'matched', actionId: 'previousWorkspace' })
+    const side = (button: number): string =>
+      mouseEventToChord({ button, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false })!
+    expect(matcher.matchMouse(side(3))).toBe('navigateBack')
+    expect(matcher.matchMouse(side(4))).toBe('navigateForward')
   })
 })
 
