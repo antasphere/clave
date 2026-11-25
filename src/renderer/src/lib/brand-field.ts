@@ -7,7 +7,7 @@
  * brand console declares — and it arrives here for exactly one job: the thing
  * that stands for *you* at the foot of the sidebar.
  *
- * Faithful port of `company/website/apps/website/src/brand/engine.ts`, itself a
+ * Faithful port of `company/marketing/website/apps/website/src/brand/engine.ts`, itself a
  * port of the console's `src/lib/engine/engine.js` (buildBlobs, renderLow, the
  * film pass). The numbers are the console's, unchanged; only the plumbing is
  * ours. The console's linework plates are NOT ported: at 28px a construction is

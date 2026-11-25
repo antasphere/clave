@@ -12,7 +12,7 @@ import { useTrafficLights } from '../../hooks/use-traffic-lights'
  * repo that ships a packaged app through GitHub Releases, so a bundled .woff2
  * inside the asar would be redistribution. An outline is drawing, not type, so
  * the wordmark travels and the licence stays where it belongs. Same call, same
- * reasoning, as the website's outlined "Antasphere" (company/website,
+ * reasoning, as the website's outlined "Antasphere" (company/marketing/website,
  * src/brand/assets.ts) — read that file before changing this one.
  *
  * ⚠️ Do NOT reintroduce a Sentient @font-face to "make it easier to edit". The
@@ -35,7 +35,7 @@ import { useTrafficLights } from '../../hooks/use-traffic-lights'
  *
  * How the paths were outlined, for the day they must be rebuilt:
  *  - source: the `--font-display` woff2 the Astro Fonts API downloads to
- *    company/website/apps/website/.astro/fonts/ — font-display-400-normal-*
+ *    company/marketing/website/apps/website/.astro/fonts/ — font-display-400-normal-*
  *    for "Clave", font-display-300-normal-* for the attribution. The files are
  *    NOT kept in this repo; fetch them there, outline, and throw them away.
  *  - glyphs: fontTools SVGPathPen over the glyph set, one pen per glyph.
