@@ -246,9 +246,7 @@ export const settingsGroup = ApiGroup.make('settings')
   // The writing styles (PRDCT-5166): the machine's styles and its default
   .add(HttpCqrs.queryEndpoint('listWritingStyles', '/writing-styles', ListWritingStyles))
   .add(HttpCqrs.commandEndpoint('saveWritingStyle', '/writing-styles', SaveWritingStyle))
-  .add(
-    HttpCqrs.commandEndpoint('deleteWritingStyle', '/writing-styles/delete', DeleteWritingStyle)
-  )
+  .add(HttpCqrs.commandEndpoint('deleteWritingStyle', '/writing-styles/delete', DeleteWritingStyle))
   .add(
     HttpCqrs.commandEndpoint(
       'setDefaultWritingStyle',

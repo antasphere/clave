@@ -231,7 +231,12 @@ describe('the writing styles on the server (PRDCT-5166)', () => {
     const listed = await get('/writing-styles')
     expect(listed.status).toBe(200)
     expect(await listed.json()).toEqual(fake.styles)
-    const draft = { name: 'Plain', description: 'Plainly.', text: 'Write plainly.', statusCard: true }
+    const draft = {
+      name: 'Plain',
+      description: 'Plainly.',
+      text: 'Write plainly.',
+      statusCard: true
+    }
     const saved = await post('/writing-styles', draft)
     expect(saved.status).toBe(200)
     expect(await saved.json()).toMatchObject({

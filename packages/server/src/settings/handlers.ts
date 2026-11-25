@@ -237,9 +237,7 @@ export const settingsHandlers = [
     )
   ),
   CommandHandler.make(DeleteWritingStyle, (p) => must((s) => s.writingStyles.remove(p.id))),
-  CommandHandler.make(SetDefaultWritingStyle, (p) =>
-    must((s) => s.writingStyles.setDefault(p.id))
-  ),
+  CommandHandler.make(SetDefaultWritingStyle, (p) => must((s) => s.writingStyles.setDefault(p.id))),
   CommandHandler.make(ImportClaudeOutputStyle, () => must((s) => s.writingStyles.importClaude())),
   // The integrations (PRDCT-4410): the host's ElevenLabs key, sealed there.
   // Every one may be refused (a host with no integrations, a key refused by

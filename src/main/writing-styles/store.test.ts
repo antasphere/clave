@@ -105,9 +105,7 @@ describe('WritingStylesStore', () => {
     expect(() => store.save(draft('Mine', { id: 'brief' }))).toThrow(
       'The built-in styles cannot be changed: duplicate one to make your own.'
     )
-    expect(() => store.save(draft('Mine', { id: 'gone' }))).toThrow(
-      'This style no longer exists.'
-    )
+    expect(() => store.save(draft('Mine', { id: 'gone' }))).toThrow('This style no longer exists.')
     expect(() => store.remove('quiet')).toThrow('The built-in styles cannot be deleted.')
     expect(() => store.remove('gone')).toThrow('This style no longer exists.')
     expect(fs.existsSync(path.join(dir, WRITING_STYLES_FILE))).toBe(false)

@@ -64,7 +64,7 @@ function readStyle(raw: unknown): StoredStyle | null {
  *  body after it. Parsed by hand: a line `key: value` between the `---`
  *  lines, the value's quotes dropped. */
 function readMarkdown(source: string): { name?: string; description?: string; body: string } {
-  const text = source.replace(/^﻿/, '')
+  const text = source.replace(/^\uFEFF/, '')
   const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
   if (!match) return { body: text }
   const fields: { name?: string; description?: string } = {}

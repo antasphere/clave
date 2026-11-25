@@ -208,9 +208,9 @@ describe('the settings source over the real managers', () => {
     expect(saved.styles.at(-1)).toMatchObject({ id: 'plain', builtIn: false })
     expect((await source.writingStyles.setDefault('plain')).defaultStyleId).toBe('plain')
     // On this host's disk: the spawn of either process reads it there.
-    expect(
-      JSON.parse(fs.readFileSync(path.join(dir, WRITING_STYLES_FILE), 'utf-8'))
-    ).toMatchObject({ defaultStyleId: 'plain', styles: [{ id: 'plain' }] })
+    expect(JSON.parse(fs.readFileSync(path.join(dir, WRITING_STYLES_FILE), 'utf-8'))).toMatchObject(
+      { defaultStyleId: 'plain', styles: [{ id: 'plain' }] }
+    )
     await expect(
       Promise.resolve().then(() => source.writingStyles.remove('brief'))
     ).rejects.toThrow('The built-in styles cannot be deleted.')

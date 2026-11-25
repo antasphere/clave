@@ -172,9 +172,7 @@ describe('the writing styles of an older server (PRDCT-5166)', () => {
     const { port } = old.address() as { port: number }
     const older = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
     try {
-      await expect(older.settings.writingStyles.list()).rejects.toBeInstanceOf(
-        WritingStylesMissing
-      )
+      await expect(older.settings.writingStyles.list()).rejects.toBeInstanceOf(WritingStylesMissing)
       await expect(older.settings.writingStyles.setDefault(null)).rejects.toThrow(
         WRITING_STYLES_NEED_UPDATE
       )
