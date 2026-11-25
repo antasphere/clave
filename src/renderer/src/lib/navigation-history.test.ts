@@ -458,6 +458,31 @@ describe('never onto what is already on screen (PRDCT-5155)', () => {
     expect(placesToward(pairs, -1, () => true, 2).map((entry) => entry.index)).toEqual([5, 3])
     expect(rows(pairs, -1, () => true)).toEqual([5, 3, 1])
   })
+
+  it('compares a place as it would show, its gone tabs left out', () => {
+    // C, then the mosaic of B and A, then A alone; B closed since. The mosaic would show
+    // A alone: what is on screen. `shown` is what the adapters pass, reduced to the rule.
+    const mosaicBA = mosaic(['tab-b', 'tab-a'], 'tab-b')
+    const aAlone = tab('tab-a')
+    const x: NavigationHistory = { entries: [tab('tab-c'), mosaicBA, aAlone], index: 2 }
+    const shown = (p: Place): Place => {
+      const tabs = p.tabs.filter((id) => id !== 'tab-b')
+      if (tabs.length === p.tabs.length) return p
+      const focused = p.focused !== null && tabs.includes(p.focused) ? p.focused : tabs[0]
+      return { ...p, tabs, focused, beside: tabs.length === 1 ? { [tabs[0]]: null } : null }
+    }
+    const alive = (): boolean => true
+    expect(stepTarget(x, -1, alive, shown)).toBe(0)
+    expect(placesToward(x, -1, alive, 20, shown).map((entry) => entry.index)).toEqual([0])
+    // Compared as recorded, the mosaic is another place: the dead press this rule removes.
+    expect(stepTarget(x, -1, alive)).toBe(1)
+    // B still there: the mosaic is a step of its own.
+    expect(stepTarget(x, -1, alive, (p) => p)).toBe(1)
+    // Forward from C: the mosaic and A after it would both show A alone, so one Forward
+    // lands on the mosaic and the list names that place once.
+    expect(stepTarget(moveTo(x, 0), 1, alive, shown)).toBe(1)
+    expect(placesToward(moveTo(x, 0), 1, alive, 20, shown).map((entry) => entry.index)).toEqual([1])
+  })
 })
 
 describe('moveTo and replaceAt', () => {

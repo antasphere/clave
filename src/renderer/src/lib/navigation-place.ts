@@ -145,6 +145,28 @@ export function readPlace(): Place {
   }
 }
 
+/**
+ * The place as going to it would show it now: its tabs that are gone (`tabOfPlace`) left
+ * out, the focus on a tab still there, and, when one tab is left alone in the uncovered
+ * mosaic, the card that shows beside it now (the restore leaves a card alone where the place
+ * recorded none). A place with all its tabs comes back as it is. Back and Forward compare
+ * with it, so a mosaic of B and A, B closed since, is not a step back onto A alone.
+ */
+export function placeAsShown(p: Place): Place {
+  const s = useSessionStore.getState()
+  const tabs = p.tabs.filter((id) => tabOfPlace(s, id, p.workspaceId))
+  if (tabs.length === p.tabs.length) return p
+  const focused = p.focused !== null && tabs.includes(p.focused) ? p.focused : (tabs[0] ?? null)
+  const alone =
+    p.view === 'terminals' &&
+    p.plugin === null &&
+    p.groupView === null &&
+    p.tabView === null &&
+    tabs.length === 1
+  const beside = !alone ? null : isFileTabId(tabs[0]) ? {} : { [tabs[0]]: cardBeside(tabs[0]) }
+  return { ...p, tabs, focused, beside }
+}
+
 /** Whether going to the place would still show something: its workspace exists, and for the
  *  mosaic, one of its tabs (`tabOfPlace`) or the page over them still does. A plugin that
  *  stopped does not kill a place that has more to show (the restore leaves the page out); a

@@ -12,7 +12,14 @@ import {
   type NavigationHistory,
   type Place
 } from '../lib/navigation-history'
-import { applyPlace, focusPlace, placeAlive, placeLabel, readPlace } from '../lib/navigation-place'
+import {
+  applyPlace,
+  focusPlace,
+  placeAlive,
+  placeAsShown,
+  placeLabel,
+  readPlace
+} from '../lib/navigation-place'
 import { usePluginUIStore } from '../components/plugins/plugin-ui-store'
 import { useSessionStore } from './session-store'
 import { useWorkspaceStore } from './workspace-store'
@@ -152,7 +159,7 @@ async function go(index: number): Promise<void> {
 async function step(delta: -1 | 1): Promise<void> {
   if (restoring) return
   flush()
-  const index = stepTarget(useNavigationStore.getState().history, delta, placeAlive)
+  const index = stepTarget(useNavigationStore.getState().history, delta, placeAlive, placeAsShown)
   if (index !== null) await go(index)
 }
 

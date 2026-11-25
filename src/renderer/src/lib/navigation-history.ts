@@ -200,16 +200,20 @@ export function recordPlace(h: NavigationHistory, place: Place): NavigationHisto
 
 /** The nearest entry in that direction whose place is still alive and would show something
  *  else than the place on screen (a T1 left for T2 and come back to, T2 then closed: one
- *  Back goes past the first T1); null when none. */
+ *  Back goes past the first T1); null when none. `shown` is what a place would show once
+ *  what is gone is left out (a mosaic of B and A, B closed since, shows A alone): the
+ *  comparison is made on that, so a place that would look like the one on screen is passed. */
 export function stepTarget(
   h: NavigationHistory,
   delta: -1 | 1,
-  alive: (p: Place) => boolean
+  alive: (p: Place) => boolean,
+  shown: (p: Place) => Place = (p) => p
 ): number | null {
   const current = h.entries[h.index]
+  const here = current && shown(current)
   for (let i = h.index + delta; i >= 0 && i < h.entries.length; i += delta) {
     const place = h.entries[i]
-    if (alive(place) && !(current && sameSpot(place, current))) return i
+    if (alive(place) && !(here && sameSpot(shown(place), here))) return i
   }
   return null
 }
@@ -234,20 +238,24 @@ export function replaceAt(h: NavigationHistory, index: number, place: Place): Na
 /** The alive places in that direction, nearest first, at most `limit`: the list a
  *  right-click on Back or Forward shows. A place that would show the same as the row before
  *  it (the place on screen, for the first row) is left out, so no place is listed twice in a
- *  row and the first row is where one step goes (`stepTarget`). */
+ *  row and the first row is where one step goes (`stepTarget`), compared as `shown`. */
 export function placesToward(
   h: NavigationHistory,
   delta: -1 | 1,
   alive: (p: Place) => boolean,
-  limit = 20
+  limit = 20,
+  shown: (p: Place) => Place = (p) => p
 ): Array<{ index: number; place: Place }> {
   const out: Array<{ index: number; place: Place }> = []
-  let last: Place | undefined = h.entries[h.index]
+  const current = h.entries[h.index]
+  let last: Place | undefined = current && shown(current)
   for (let i = h.index + delta; i >= 0 && i < h.entries.length && out.length < limit; i += delta) {
     const place = h.entries[i]
-    if (!alive(place) || (last && sameSpot(place, last))) continue
+    if (!alive(place)) continue
+    const looks = shown(place)
+    if (last && sameSpot(looks, last)) continue
     out.push({ index: i, place })
-    last = place
+    last = looks
   }
   return out
 }

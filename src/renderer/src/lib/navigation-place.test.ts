@@ -12,7 +12,7 @@ import { useWorkspaceStore } from '../store/workspace-store'
 import type { FileTab, Session } from '../store/session-types'
 import type { Workspace } from '../../../shared/workspace-types'
 import type { Place } from './navigation-history'
-import { placeAlive, placeLabel, tabOfPlace } from './navigation-place'
+import { placeAlive, placeAsShown, placeLabel, tabOfPlace } from './navigation-place'
 
 /**
  * The tabs of a recorded place, read off the stores (PRDCT-5155): a tab is the place's only
@@ -128,5 +128,29 @@ describe('the Agents view in the lists (PRDCT-5155)', () => {
     expect(placeLabel(agents('tab-1')).label).toBe('Agents')
     expect(placeLabel(agents('agent-gone')).label).toBe('Agents')
     expect(placeLabel(agents('agent-far')).label).toBe('Agents')
+  })
+})
+
+describe('a place as going to it would show it (PRDCT-5155)', () => {
+  it('leaves out its gone tabs, so a mosaic reduced to one tab reads as that tab alone', () => {
+    // A mosaic of a tab closed since and tab-1: going to it shows tab-1 alone.
+    expect(placeAsShown(place(['tab-gone', 'tab-1']))).toEqual(place(['tab-1']))
+    // A tab moved into another workspace is gone for this one, the focus moves to what is left.
+    expect(placeAsShown(place(['tab-moved', 'tab-2'], { focused: 'tab-moved' }))).toEqual(
+      place(['tab-2'])
+    )
+    // A file tab left alone has no card beside it.
+    expect(placeAsShown(place(['tab-gone', 'file-a'])).beside).toEqual({})
+    // Covered by a page, nothing shows beside a tab.
+    expect(
+      placeAsShown(place(['tab-gone', 'tab-1'], { view: 'settings', section: 'general' })).beside
+    ).toBeNull()
+    // Two tabs left: still a mosaic, no card.
+    expect(placeAsShown(place(['tab-gone', 'tab-1', 'tab-2'])).beside).toBeNull()
+  })
+
+  it('comes back as it is when all its tabs are there', () => {
+    const whole = place(['tab-1', 'tab-2'])
+    expect(placeAsShown(whole)).toBe(whole)
   })
 })

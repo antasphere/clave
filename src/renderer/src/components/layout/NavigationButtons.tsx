@@ -22,7 +22,7 @@ import { useSessionStore } from '../../store/session-store'
 import { useWorkspaceStore } from '../../store/workspace-store'
 import { useShortcutLabel } from '../../store/keymap-store'
 import { placesToward, stepTarget, type NavigationHistory } from '../../lib/navigation-history'
-import { placeAlive, placeLabel, type PlaceKind } from '../../lib/navigation-place'
+import { placeAlive, placeAsShown, placeLabel, type PlaceKind } from '../../lib/navigation-place'
 
 /** One glyph per kind of place, in the lists behind the buttons. */
 const PLACE_ICONS: Record<PlaceKind, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
@@ -77,29 +77,31 @@ export function NavigationButtons(): React.JSX.Element {
   const [list, setList] = useState<OpenList | null>(null)
 
   const enabled: Record<Direction, boolean> = {
-    back: stepTarget(history, -1, placeAlive) !== null,
-    forward: stepTarget(history, 1, placeAlive) !== null
+    back: stepTarget(history, -1, placeAlive, placeAsShown) !== null,
+    forward: stepTarget(history, 1, placeAlive, placeAsShown) !== null
   }
   const shown = list !== null && list.history === history ? list : null
   const items: ContextMenuItem[] = shown
-    ? placesToward(history, DELTA[shown.direction], placeAlive).map(({ index, place }) => {
-        const { label, kind } = placeLabel(place)
-        const Icon = PLACE_ICONS[kind]
-        return {
-          id: String(index),
-          label,
-          content: (
-            <span className="nav-history-row">
-              <span className="menu-glyph">
-                <Icon className="w-3.5 h-3.5" />
+    ? placesToward(history, DELTA[shown.direction], placeAlive, 20, placeAsShown).map(
+        ({ index, place }) => {
+          const { label, kind } = placeLabel(place)
+          const Icon = PLACE_ICONS[kind]
+          return {
+            id: String(index),
+            label,
+            content: (
+              <span className="nav-history-row">
+                <span className="menu-glyph">
+                  <Icon className="w-3.5 h-3.5" />
+                </span>
+                <span className="nav-history-name">{label}</span>
               </span>
-              <span className="nav-history-name">{label}</span>
-            </span>
-          ),
-          attributes: { 'data-nav-entry': '', 'data-nav-index': String(index) },
-          onClick: () => void useNavigationStore.getState().go(index)
+            ),
+            attributes: { 'data-nav-entry': '', 'data-nav-index': String(index) },
+            onClick: () => void useNavigationStore.getState().go(index)
+          }
         }
-      })
+      )
     : []
 
   const button = (direction: Direction): React.JSX.Element => {
@@ -126,7 +128,7 @@ export function NavigationButtons(): React.JSX.Element {
           // list is drawn from the history that holds it and is not closed by it at once.
           recordPendingPlace()
           const current = useNavigationStore.getState().history
-          if (stepTarget(current, DELTA[direction], placeAlive) === null) return
+          if (stepTarget(current, DELTA[direction], placeAlive, placeAsShown) === null) return
           const box = event.currentTarget.getBoundingClientRect()
           setList({ direction, x: box.left, y: box.bottom + MENU_GAP, history: current })
         }}
