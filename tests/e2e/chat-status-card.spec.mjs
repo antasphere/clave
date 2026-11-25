@@ -26,6 +26,20 @@ const ALONE = block('doing: a card with no words', 'next: nothing')
 export async function run(t) {
   const { win, record, close } = await openChat('chat-status-card')
   try {
+    /** The card holding `words`, scrolled into the page: the transcript is
+     *  virtualised, so a card far from the end is not in the document. */
+    const cardWith = async (view, words) => {
+      const card = view.getByTestId('status-card').filter({ hasText: words })
+      const scroller = view.locator('.chat-scroll')
+      for (const at of [1, 0, 0.25, 0.5, 0.75]) {
+        if (await card.count()) return card.first()
+        await scroller.evaluate((el, at) => {
+          el.scrollTop = at * el.scrollHeight
+        }, at)
+        await win.waitForTimeout(400)
+      }
+      return (await card.count()) ? card.first() : null
+    }
     const chat = win.locator('[data-testid="chat-view"]')
     const send = async (text) => {
       const before = await chat.locator('.chat-turn-wrap[data-side="end"]').count()
@@ -84,40 +98,54 @@ export async function run(t) {
     )
 
     await send(NOTHING)
-    await until(async () => ((await cards.count()) === 2 ? true : null))
+    const nothing = chat.getByTestId('status-card').filter({ hasText: 'the export shipped' })
+    await until(async () => ((await nothing.count()) === 1 ? true : null))
+    const asked = await cardWith(chat, 'keep the old format?')
     t.check(
       'Chat: the next message makes the card before it past, and the new one owes nothing',
-      (await cards.nth(0).getAttribute('data-past')) === 'true' &&
-        (await cards.nth(1).getAttribute('data-past')) === null &&
-        (await cards.nth(1).getAttribute('data-needs-you')) === 'false' &&
-        (await cards.nth(1).innerText()).includes('Nothing needed from you')
+      (await asked?.getAttribute('data-past')) === 'true' &&
+        (await nothing.getAttribute('data-past')) === null &&
+        (await nothing.getAttribute('data-needs-you')) === 'false' &&
+        (await nothing.innerText()).includes('Nothing needed from you')
     )
 
     await send(TRAILED)
-    await until(async () => ((await answers(chat).count()) === 3 ? true : null))
-    const trailed = await answers(chat).nth(2).innerText()
+    const trailedWrap = chat.locator('.chat-turn-wrap[data-side="start"]').last()
+    await until(async () =>
+      (await trailedWrap.innerText()).includes('And a word after it.') ? true : null
+    )
+    const trailed = trailedWrap.locator('.chat-turn[data-role="assistant"]')
+    const trailedText = await trailed.innerText()
     t.check(
-      'Chat: a block followed by words is the answer, and draws no card',
-      (await cards.count()) === 2 &&
-        trailed.includes('clave-status') &&
-        trailed.includes('And a word after it.'),
-      { trailed }
+      'Chat: a block followed by words is the answer, drawn as code, and draws no card',
+      (await trailedWrap.getByTestId('status-card').count()) === 0 &&
+        (await trailed.locator('code.language-clave-status').count()) === 1 &&
+        trailedText.includes('doing: an example') &&
+        trailedText.includes('And a word after it.'),
+      { trailedText }
+    )
+
+    t.check(
+      'Chat: a message after a card that owed nothing makes it past too',
+      (await (await cardWith(chat, 'the export shipped'))?.getAttribute('data-past')) === 'true'
     )
 
     await send(ALONE)
-    await until(async () => ((await cards.count()) === 3 ? true : null))
     const lastWrap = chat.locator('.chat-turn-wrap[data-side="start"]').last()
+    await until(async () =>
+      (await lastWrap.getByTestId('status-card').count()) === 1 ? true : null
+    )
     t.check(
       'Chat: a card alone is drawn with no words, and is current',
       (await lastWrap.locator('.chat-turn').count()) === 0 &&
         (await lastWrap.getByTestId('status-card').count()) === 1 &&
-        (await cards.nth(2).getAttribute('data-past')) === null &&
-        (await cards.nth(1).getAttribute('data-past')) === 'true'
+        (await lastWrap.getByTestId('status-card').getAttribute('data-past')) === null &&
+        (await lastWrap.getByTestId('status-card').innerText()).includes('a card with no words')
     )
     const chatAnswers = await answers(chat).allInnerTexts()
     t.check(
-      'Chat: no answer but the one that quotes the format shows the block',
-      chatAnswers.filter((text) => text.includes('clave-status')).length === 1,
+      'Chat: no answer on screen holds the block as text',
+      chatAnswers.every((text) => !text.includes('```') && !text.includes('next: answer')),
       { chatAnswers }
     )
 
@@ -125,20 +153,28 @@ export async function run(t) {
     await selectChatView(win, record.id, 'terminal')
     const term = win.locator('[data-testid="terminal-view"]')
     await term.waitFor()
-    const termCards = term.getByTestId('status-card')
-    await until(async () => ((await termCards.count()) === 3 ? true : null))
-    const termAnswers = await answers(term).allInnerTexts()
-    t.check(
-      'Enclave: three cards, the last one current, the two before it past',
-      (await termCards.nth(0).getAttribute('data-past')) === 'true' &&
-        (await termCards.nth(1).getAttribute('data-past')) === 'true' &&
-        (await termCards.nth(2).getAttribute('data-past')) === null
+    const termLast = term.locator('.chat-turn-wrap[data-side="start"]').last()
+    await until(async () =>
+      (await termLast.getByTestId('status-card').count()) === 1 ? true : null
     )
     t.check(
-      'Enclave: the card shows its fields, and only the quoting answer shows the block',
-      (await termCards.nth(0).innerText()).includes('keep the old format?') &&
-        termAnswers.filter((text) => text.includes('clave-status')).length === 1 &&
-        termAnswers.some((text) => text.trim() === 'The export is ready.'),
+      'Enclave: the card alone is drawn, current',
+      (await termLast.getByTestId('status-card').getAttribute('data-past')) === null &&
+        (await termLast.locator('.chat-turn').count()) === 0
+    )
+    const termAsks = await cardWith(term, 'keep the old format?')
+    t.check(
+      'Enclave: the first card shows its fields under its words, past',
+      !!termAsks &&
+        (await termAsks.getAttribute('data-past')) === 'true' &&
+        (await termAsks.getAttribute('data-needs-you')) === 'true' &&
+        (await termAsks.innerText()).includes('answer the question above')
+    )
+    const termAnswers = await answers(term).allInnerTexts()
+    t.check(
+      'Enclave: the answers on screen hold no block as text',
+      termAnswers.some((text) => text.trim() === 'The export is ready.') &&
+        termAnswers.every((text) => !text.includes('next: answer')),
       { termAnswers }
     )
 
