@@ -44,6 +44,9 @@ export interface MachineIntegrations {
   jev: JevStatus | null
   /** The machine answered without a Jev status: its server needs an update. */
   jevOutdated: boolean
+  /** The last Jev write's failure, said under the Jev card alone: one safe
+   *  sentence, never the raw error. */
+  jevError: string | null
   /** A write in flight (save, check, remove): the buttons wait for it. */
   busy: boolean
   voices: MachineVoices
@@ -56,6 +59,7 @@ export const EMPTY_MACHINE_INTEGRATIONS: MachineIntegrations = {
   elevenLabs: null,
   jev: null,
   jevOutdated: false,
+  jevError: null,
   busy: false,
   voices: EMPTY_MACHINE_VOICES
 }
@@ -123,20 +127,22 @@ function statusesOf(
   return { elevenLabs: answer.elevenLabs, jev: answer.jev ?? null, jevOutdated: !answer.jev }
 }
 
-/** One write on that machine; the statuses on screen are its answer. */
+/** One write on that machine; the statuses on screen are its answer. A
+ *  failure is said under the card that wrote (`field`). */
 async function write(
   machine: string,
   run: () => Promise<IntegrationsStatus>,
   fallback: string,
-  after?: (current: MachineIntegrations, next: ElevenLabsStatus) => Partial<MachineIntegrations>
+  after?: (current: MachineIntegrations, next: ElevenLabsStatus) => Partial<MachineIntegrations>,
+  field: 'error' | 'jevError' = 'error'
 ): Promise<boolean> {
-  patchMachine(machine, (current) => ({ ...current, busy: true, error: null }))
+  patchMachine(machine, (current) => ({ ...current, busy: true, [field]: null }))
   try {
     const answer = await run()
     patchMachine(machine, (current) => ({
       ...current,
       status: 'ready',
-      error: null,
+      [field]: null,
       busy: false,
       ...statusesOf(answer),
       ...after?.(current, answer.elevenLabs)
@@ -146,7 +152,7 @@ async function write(
     patchMachine(machine, (current) => ({
       ...current,
       busy: false,
-      error: sentenceOf(error, fallback)
+      [field]: sentenceOf(error, fallback)
     }))
     return false
   }
@@ -227,12 +233,15 @@ async function jevWrite(
   run: () => Promise<IntegrationsStatus>,
   fallback: string
 ): Promise<boolean> {
-  const done = await write(machine, run, fallback)
-  if (
-    !done &&
-    useIntegrationsStore.getState().byMachine[machine]?.error === INTEGRATIONS_NEED_UPDATE
-  )
-    patchMachine(machine, (current) => ({ ...current, error: null, jev: null, jevOutdated: true }))
+  const done = await write(machine, run, fallback, undefined, 'jevError')
+  const said = useIntegrationsStore.getState().byMachine[machine]?.jevError
+  if (!done && said === INTEGRATIONS_NEED_UPDATE)
+    patchMachine(machine, (current) => ({
+      ...current,
+      jevError: null,
+      jev: null,
+      jevOutdated: true
+    }))
   return done
 }
 

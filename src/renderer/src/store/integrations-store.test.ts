@@ -249,6 +249,7 @@ describe('the Jev key', () => {
     expect(await store.setJevKey('server-old', 'ts-store-test-key')).toBe(false)
     expect(store.useIntegrationsStore.getState().byMachine['server-old']).toMatchObject({
       error: null,
+      jevError: null,
       jevOutdated: true
     })
     expect(store.JEV_NEEDS_UPDATE).toBe('This server needs an update to hold a Jev key.')
@@ -263,18 +264,20 @@ describe('the Jev key', () => {
       )
     )
     await store.setJevKey('local', 'ts-store-test-key')
-    expect(store.useIntegrationsStore.getState().byMachine.local.error).toBe(
-      'TypeSafe refused the key: Error: the key is revoked.'
-    )
+    expect(store.useIntegrationsStore.getState().byMachine.local).toMatchObject({
+      // Said under the Jev card, never under the ElevenLabs one.
+      error: null,
+      jevError: 'TypeSafe refused the key: Error: the key is revoked.'
+    })
     api.fleetJevCheck.mockRejectedValue(new Error('Error: The server could not reach TypeSafe.'))
     await store.checkJev('local')
-    expect(store.useIntegrationsStore.getState().byMachine.local.error).toBe(
+    expect(store.useIntegrationsStore.getState().byMachine.local.jevError).toBe(
       'The server could not reach TypeSafe.'
     )
     api.fleetJevRemove.mockRejectedValue(new Error('ECONNRESET at socket.ts:12'))
     await store.removeJevKey('local')
     const local = store.useIntegrationsStore.getState().byMachine.local
-    expect(local.error).toBe('The key could not be removed from the machine.')
+    expect(local.jevError).toBe('The key could not be removed from the machine.')
     expect(local.jev).toEqual(jev())
   })
 
