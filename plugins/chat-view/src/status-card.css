@@ -36,6 +36,11 @@
   font-size: var(--text-xs);
   font-weight: var(--font-weight-medium);
 }
+/* An agent writes "a few words", often with no capital: the head reads as a
+   title whichever model wrote it. */
+.status-card-doing::first-letter {
+  text-transform: uppercase;
+}
 .status-card-where {
   color: var(--term-ink, var(--text-primary));
 }
@@ -58,6 +63,11 @@
   gap: calc(var(--spacing) / 2);
   padding-left: calc(var(--spacing) * 4);
   list-style: disc;
+}
+/* A decision is what the person came to read: the ink of the status itself,
+   never quieter than it. */
+.status-card-decide li {
+  color: var(--term-ink, var(--text-primary));
 }
 .status-card-decide li::marker {
   color: var(--text-tertiary);
@@ -97,7 +107,8 @@
   background-color: transparent;
   color: var(--text-tertiary);
 }
-.status-card[data-past] :is(.status-card-where, .status-card-next .status-card-field) {
+.status-card[data-past]
+  :is(.status-card-where, .status-card-decide li, .status-card-next .status-card-field) {
   color: var(--text-secondary);
 }
 

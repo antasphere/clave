@@ -66,9 +66,13 @@ type Key = 'doing' | 'where' | 'decide' | 'next'
  *  which a model adds from habit. */
 const FIELD = /^\s*(?:[-*]\s+)?(?:\*\*)?(doing|where|decide|next)(?:\*\*)?\s*:(?:\*\*)?\s*(.*)$/i
 
-/** What "nothing is owed" reads as in a `next` line: the rule's own word,
- *  with or without what a model adds after it ("nothing for now"), or a dash. */
+/** What "nothing is owed" reads as in a `next` or a `decide` line: the
+ *  rule's own word, with or without what a model adds after it ("nothing for
+ *  now"), or a dash. */
 const NOTHING = /^["'“”‘’]?\s*(?:(?:nothing|none|n\/a|no action)\b.*|-+|—)$/i
+/** Whether a line says nothing is owed. A line that opens on the word and
+ *  then asks something ("Nothing else, or the rename too?") is a question. */
+const saysNothing = (value: string): boolean => NOTHING.test(value) && !value.includes('?')
 
 const clip = (value: string): string =>
   value.length > STATUS_FIELD_MAX ? `${value.slice(0, STATUS_FIELD_MAX - 1).trimEnd()}…` : value
@@ -85,7 +89,9 @@ function readFields(lines: readonly string[]): StatusCard | null {
         card.decide[at] = clip(`${card.decide[at]} ${value}`.trim())
         return at
       }
-      if (!value) return null
+      // "decide: nothing" is no decision: a model writes the line it was told
+      // to leave out (seen on a real answer, 25 November 2026).
+      if (!value || saysNothing(value)) return null
       if (card.decide.length >= STATUS_DECIDE_MAX) return null
       card.decide.push(clip(value))
       return card.decide.length - 1
@@ -108,7 +114,7 @@ function readFields(lines: readonly string[]): StatusCard | null {
     }
   }
   if (!named) return null
-  if (card.next !== null && NOTHING.test(card.next)) card.next = null
+  if (card.next !== null && saysNothing(card.next)) card.next = null
   if (card.doing === null && card.where === null && card.next === null && !card.decide.length)
     return null
   return card

@@ -98,6 +98,32 @@ describe('readStatusCard', () => {
     )
   })
 
+  // What a real model wrote at the end of a turn that owed nothing (Haiku 5.5
+  // in a Clave chat, 25 November 2026): the line it was told to leave out.
+  it('reads "decide: nothing" as no decision', () => {
+    const card = readStatusCard(
+      block(
+        'doing: Opening three test tabs in this folder',
+        'where: All three tabs opened and are running.',
+        'decide: nothing',
+        'next: nothing'
+      )
+    ).card!
+    expect(card.decide).toEqual([])
+    expect(card.next).toBeNull()
+    expect(statusNeedsYou(card)).toBe(false)
+    for (const none of ['none', 'Nothing.', 'N/A', '-', 'nothing for now'])
+      expect(readStatusCard(block('doing: x', `decide: ${none}`)).card?.decide, none).toEqual([])
+    // A question that opens on the word is still a question.
+    expect(
+      readStatusCard(block('doing: x', 'decide: Nothing else, or the rename too?')).card?.decide
+    ).toEqual(['Nothing else, or the rename too?'])
+    expect(
+      readStatusCard(block('doing: x', 'next: Nothing more, unless you want the rename?')).card
+        ?.next
+    ).toBe('Nothing more, unless you want the rename?')
+  })
+
   it('says a card asks something only for a decision or a next step', () => {
     const quiet = readStatusCard(block('doing: x', 'where: done', 'next: nothing')).card!
     expect(statusNeedsYou(quiet)).toBe(false)
