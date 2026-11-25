@@ -190,8 +190,8 @@ export interface SettingsClient {
   }
   /** The decisions' switches on that server (PRDCT-5179); both answer the list. */
   readonly decisions: {
-    readonly listDecisions: () => Promise<ReadonlyArray<DecisionPreference>>
-    readonly setDecisionPreference: (
+    readonly list: () => Promise<ReadonlyArray<DecisionPreference>>
+    readonly set: (
       id: string,
       patch: DecisionPreferencePatch
     ) => Promise<ReadonlyArray<DecisionPreference>>
@@ -368,9 +368,9 @@ export function settingsClient(callApi: Call): SettingsClient {
         ).then((v) => v.helpers)
     },
     decisions: {
-      listDecisions: () =>
+      list: () =>
         decisionsMissing(call((g) => g.listDecisions({ payload: {} }))).then((v) => v.decisions),
-      setDecisionPreference: (id, patch) =>
+      set: (id, patch) =>
         decisionsMissing(call((g) => g.setDecisionPreference({ payload: { id, ...patch } }))).then(
           (v) => v.decisions
         )

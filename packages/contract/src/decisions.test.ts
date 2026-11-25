@@ -31,9 +31,13 @@ describe('the decisions contract', () => {
       { sessionId: 'c', projects: reading, reason: 'unreachable' }
     ]
     expect(Schema.decodeUnknownSync(ReadTabProjects.success)({ tabs })).toEqual({ tabs })
-    expect(result({ tabs: [{ sessionId: 'd', projects: null, reason: 'whatever' }] })._tag).toBe(
-      'Left'
-    )
+    // A reason this Mac does not know (a newer server's) reads as absent;
+    // the rest of the answer, the reading included, is kept.
+    expect(
+      Schema.decodeUnknownSync(ReadTabProjects.success)({
+        tabs: [{ sessionId: 'd', projects: reading, reason: 'a-newer-reason' }]
+      })
+    ).toEqual({ tabs: [{ sessionId: 'd', projects: reading }] })
     expect(
       result({ tabs: [{ sessionId: 'e', projects: { ...reading, status: 'maybe' } }] })._tag
     ).toBe('Left')

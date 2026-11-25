@@ -11,7 +11,7 @@
  *   null) with the reason no new one was made. A tab whose record already
  *   holds a reading made on the same basis is answered from it, unasked.
  */
-import { Schema } from 'effect'
+import { Option, Schema } from 'effect'
 import { Command } from '@structure-ai/cqrs'
 import { ApiGroup, HttpCqrs } from '@structure-ai/http'
 import { CapabilityUnavailable } from './errors'
@@ -34,6 +34,19 @@ export const DECISION_FAILURE_REASONS = [
   'cancelled'
 ] as const
 export type DecisionFailureReason = (typeof DECISION_FAILURE_REASONS)[number]
+const isReason = (value: unknown): value is DecisionFailureReason =>
+  (DECISION_FAILURE_REASONS as readonly unknown[]).includes(value)
+
+/** A reason this Mac does not know (a newer server's) reads as absent, so
+ *  the rest of the answer still decodes (the rule of `speech.ts`). */
+const reason = Schema.optionalToOptional(
+  Schema.String,
+  Schema.Literal(...DECISION_FAILURE_REASONS),
+  {
+    decode: (value) => Option.filter(value, isReason),
+    encode: (value) => value
+  }
+)
 
 /** The most tabs one call may name. */
 export const READ_TAB_PROJECTS_MAX = 50
@@ -45,8 +58,9 @@ export const TabProjectsRead = Schema.Struct({
   sessionId: Schema.String,
   /** The reading the record now holds; null when it holds none. */
   projects: Schema.NullOr(TabProjects),
-  /** Absent when a reading was made or the record's was still good. */
-  reason: Schema.optional(Schema.Literal(...DECISION_FAILURE_REASONS))
+  /** Absent when a reading was made or the record's was still good, and
+   *  when it is one this Mac does not know. */
+  reason
 })
 export type TabProjectsRead = typeof TabProjectsRead.Type
 

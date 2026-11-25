@@ -227,7 +227,7 @@ const BUILT_IN_CHATS = Object.values(CHAT_PROFILE_IDS)
 export const LAUNCH_OPTIONS_DESCRIPTION =
   "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine, the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for the tabs Clave started on no connection, never sessions started outside Clave); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
 export const LIST_DESCRIPTION =
-  'List the tabs this server owns, including stopped records: each with its harness (mode), model, launch profile and, on a harness with a connection pool, its connection ({ id, label, exhausted }); nestedUnder names the tab it is shown under, parentId the tab "parent" reaches from it (the tab that opened it, else the tab it is nested under).'
+  'List the tabs this server owns, including stopped records: each with its harness (mode), model, launch profile and, on a harness with a connection pool, its connection ({ id, label, exhausted }); nestedUnder names the tab it is shown under, parentId the tab "parent" reaches from it (the tab that opened it, else the tab it is nested under). A tab with a reading carries projects ({ status, names: [{ name, share }] }), the projects Jev read it works on with their shares.'
 export const SWITCH_ACCOUNT_DESCRIPTION =
   'Move a tab to another connection (a subscription or a key of its harness\'s pool) when the one it runs on is about to hit its limit, or when asked: the same tab, its agent restarted on the other connection with the conversation resumed. Tabs on a harness with a connection pool only. "mine" moves your own tab (your process restarts; finish what you are writing first). The connection is an id, an exact name, or "any" for whichever connection of the pool has headroom. This server switches at once when its switch mode is automatic (accountSwitchMode in its preferences.json, read when it starts; propose is the default, and a setting from the Mac\'s server pages is PRDCT-3318) and refuses when it is propose, since a server has no window to propose to. A pin set from the Mac window lives in that window and is not visible here: this tool cannot honour it (PRDCT-4508).'
 export const OPEN_SESSION_DESCRIPTION = `Open a new tab on this server: an agent of one of its harnesses (${HARNESSES.map((h) => h.name).join(', ')}) or a plain terminal, in an absolute directory. ${CHAT_HARNESSES} open in Clave's CHAT VIEW (the conversation interface with message bubbles and a composer) or in the terminal: omit chat to open the way this server's launcher does (its interaction mode), chat: true forces a chat view, chat: false the terminal. Optionally a model, a connection (account), a launch profile, a name, a first prompt and a group; clave_launch_options lists what this machine can launch. With resume, the new tab continues a PAST conversation by its id. Returns the new sessionId; the tab is linked to its caller, so clave_list reports its parentId and clave_send_to_session and clave_read_session reach it.`
@@ -554,7 +554,15 @@ function buildServer(
             // PRDCT-4540: a tab whose process left its connection says so.
             connectionLeft: record ? providerConnectionLeft(record) : null,
             // PRDCT-4997: the tab it is shown under, as its record keeps it.
-            nestedUnder: record?.spawnedBy ?? null
+            nestedUnder: record?.spawnedBy ?? null,
+            // PRDCT-5179: which projects the tab works on, as Jev last read it;
+            // absent when never read.
+            ...(record?.projects && {
+              projects: {
+                status: record.projects.status,
+                names: record.projects.picks.map((pick) => ({ name: pick.name, share: pick.p }))
+              }
+            })
           }
         })
       })

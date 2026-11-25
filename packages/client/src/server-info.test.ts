@@ -108,12 +108,10 @@ describe('the decisions of an older server (PRDCT-5179)', () => {
     await new Promise<void>((resolve) => old!.listen(0, '127.0.0.1', resolve))
     const { port } = old.address() as { port: number }
     api = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
-    await expect(api.settings.decisions.listDecisions()).rejects.toBeInstanceOf(
-      DecisionPreferencesMissing
+    await expect(api.settings.decisions.list()).rejects.toBeInstanceOf(DecisionPreferencesMissing)
+    await expect(api.settings.decisions.set('tab-project', { enabled: false })).rejects.toThrow(
+      DECISIONS_NEED_UPDATE
     )
-    await expect(
-      api.settings.decisions.setDecisionPreference('tab-project', { enabled: false })
-    ).rejects.toThrow(DECISIONS_NEED_UPDATE)
     // The window reads the same words to say it (it cannot load the client).
     const shared = await import('../../../src/shared/decision-preferences')
     expect(DECISIONS_NEED_UPDATE).toBe(shared.DECISIONS_NEED_UPDATE)
