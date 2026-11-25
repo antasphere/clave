@@ -13,10 +13,12 @@ import {
   resolveLaunchProfile,
   sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
+  tomlBasicString,
   withStyleText,
   type LaunchProfile,
   type LaunchProfilePreferences
 } from './agent-launch'
+import { BUILT_IN_STYLES, composeStyleText } from './writing-styles'
 
 const prefs: LaunchProfilePreferences = {
   version: 1,
@@ -758,6 +760,55 @@ describe('a writing style reaches each harness its own way (PRDCT-5166)', () => 
     })
     expect(resumed).toEqual(['codex', 'resume', '-c', TITLE, '-c', config, 'thread-1'])
     expect(resumed[resumed.length - 1]).toBe('thread-1')
+  })
+
+  describe('the TOML string Codex reads the instructions as', () => {
+    /** What TOML refuses in a basic string: a raw control character other
+     *  than tab, and an escape of a surrogate, no Unicode scalar value. */
+    const rawControl = (value: string): boolean =>
+      [...value].some((char) => {
+        const code = char.codePointAt(0)!
+        return (code < 0x20 && code !== 0x09) || code === 0x7f
+      })
+    const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F][0-9a-fA-F]{2}/
+    const tomlSafe = (value: string): void => {
+      expect(rawControl(value)).toBe(false)
+      expect(value).not.toMatch(SURROGATE_ESCAPE)
+      expect(value.startsWith('"') && value.endsWith('"')).toBe(true)
+    }
+
+    it('escapes U+007F and puts U+FFFD for a lone surrogate, read back to the text', () => {
+      const text = `Delete\u007Fhere, a lone \uD83D and \uDE00, a pair \uD83D\uDE00, a tab\tand a\nline.`
+      // JSON alone gives TOML what it refuses: that is the case held.
+      expect(rawControl(JSON.stringify(text))).toBe(true)
+      expect(JSON.stringify(text)).toMatch(SURROGATE_ESCAPE)
+      const value = tomlBasicString(text)
+      tomlSafe(value)
+      expect(value).toContain('\\u007F')
+      expect(JSON.parse(value)).toBe(
+        `Delete\u007Fhere, a lone \uFFFD and \uFFFD, a pair \uD83D\uDE00, a tab\tand a\nline.`
+      )
+    })
+
+    it("holds every built-in style's text, read back exactly", () => {
+      for (const style of BUILT_IN_STYLES) {
+        const text = composeStyleText(style)
+        const value = tomlBasicString(text)
+        tomlSafe(value)
+        expect(JSON.parse(value)).toBe(text)
+      }
+    })
+
+    it('is the value on the command line', () => {
+      const text = 'Mark\u007F, half \uD800.'
+      const argv = buildAgentArgv({
+        kind: 'codex',
+        profile: profileOf('codex', 'codex'),
+        developerInstructions: text
+      })
+      expect(argv.at(-1)).toBe(`developer_instructions=${tomlBasicString(text)}`)
+      tomlSafe(argv.at(-1)!.slice('developer_instructions='.length))
+    })
   })
 
   it('no flag for any harness without a style', () => {

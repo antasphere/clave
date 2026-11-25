@@ -293,6 +293,20 @@ export function withStyleText(
   return own || style || undefined
 }
 
+/** A text as a TOML basic string (PRDCT-5166), for a `-c key=value` Codex
+ *  reads as TOML. A JSON string is one, its newlines and control characters
+ *  escaped, but for two characters: JSON leaves U+007F raw, which TOML
+ *  forbids in a basic string, and writes a lone surrogate as `\udXXX`, which
+ *  is not a Unicode scalar value TOML takes. A lone surrogate becomes U+FFFD
+ *  (it stands for no character anyway), U+007F its escape. */
+export function tomlBasicString(text: string): string {
+  const wellFormed = text.replace(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+    '\uFFFD'
+  )
+  return JSON.stringify(wellFormed).replace(/\u007F/g, '\\u007F')
+}
+
 export function buildAgentArgv(input: {
   kind: AgentKind
   profile: LaunchProfile
@@ -388,11 +402,11 @@ export function buildAgentArgv(input: {
     }
     if (input.model) argv.push('-m', input.model)
     argv.push('-c', CODEX_TITLE_CONFIG)
-    // A writing style (PRDCT-5166). The value is read as TOML: a JSON string
-    // is a valid TOML basic string, its newlines escaped; a raw newline would
-    // make Codex take the whole value as a plain string, silently.
+    // A writing style (PRDCT-5166). The value is read as TOML: a value that
+    // is not valid TOML makes Codex take the whole of it as a plain string,
+    // silently (`tomlBasicString`).
     if (input.developerInstructions)
-      argv.push('-c', `developer_instructions=${JSON.stringify(input.developerInstructions)}`)
+      argv.push('-c', `developer_instructions=${tomlBasicString(input.developerInstructions)}`)
     // The thread id stays last, as the `resume` subcommand takes it.
     if (input.resumeSessionId) argv.push(input.resumeSessionId)
   } else if (input.kind === 'antigravity') {
