@@ -124,6 +124,29 @@ describe('readStatusCard', () => {
     ).toBe('Nothing more, unless you want the rename?')
   })
 
+  // The verifier's finding (round 1): a line that opens on the word and then
+  // says something was dropped, and the card read "Nothing needed from you".
+  it('keeps a line that opens on the word and goes on to ask something', () => {
+    for (const next of [
+      'None of the migrations ran on prod: run them by hand from the console',
+      'Nothing works until you restart the app: restart it now',
+      'Nothing else in this folder is safe to delete, so confirm the list first',
+      'None of this is urgent; read the report when you can'
+    ]) {
+      const card = readStatusCard(block('doing: x', `next: ${next}`)).card!
+      expect(card.next, next).toBe(next)
+      expect(statusNeedsYou(card), next).toBe(true)
+    }
+    const decision =
+      'None of the three options is free: pick A (cheaper) or B (faster). I recommend A.'
+    expect(readStatusCard(block('doing: x', `decide: ${decision}`)).card?.decide).toEqual([
+      decision
+    ])
+    // The word with the few words a model adds is still nothing.
+    for (const none of ['nothing needed from you', 'None needed.', 'no action needed', '—'])
+      expect(readStatusCard(block('doing: x', `next: ${none}`)).card?.next, none).toBeNull()
+  })
+
   it('says a card asks something only for a decision or a next step', () => {
     const quiet = readStatusCard(block('doing: x', 'where: done', 'next: nothing')).card!
     expect(statusNeedsYou(quiet)).toBe(false)
@@ -187,13 +210,40 @@ describe('readStatusCard', () => {
       untouched(`${block('doing: x')}\n\n\`\`\`sh\nls\n\`\`\``))
     it('a block never closed', () => untouched('Hi\n\n```clave-status\ndoing: x'))
     it('a block that names no field', () => untouched('Hi\n\n```clave-status\nall good\n```'))
-    it('a block with every field empty', () =>
-      untouched('Hi\n\n```clave-status\ndoing:\nnext:\n```'))
     it('the format quoted inside a longer fence', () =>
       untouched(`The format:\n\n\`\`\`\`\n${block('doing: x', 'next: nothing')}\n\`\`\`\``))
     it('the tag named in prose', () => untouched('The fence is tagged clave-status.'))
     it('an indented code block', () =>
       untouched('Hi\n\n    ```clave-status\n    doing: x\n    ```'))
+  })
+
+  // The verifier's finding (round 1): a block that names a field and says
+  // nothing in it was left in the answer as raw code.
+  it('reads a block that only says nothing as a card that owes nothing', () => {
+    const none = { doing: null, where: null, decide: [], next: null }
+    expect(readStatusCard('All done.\n\n```clave-status\nnext: nothing\n```')).toEqual({
+      body: 'All done.',
+      card: none
+    })
+    expect(readStatusCard('Hi\n\n```clave-status\ndoing:\nnext:\n```')).toEqual({
+      body: 'Hi',
+      card: none
+    })
+    expect(statusNeedsYou(none)).toBe(false)
+    expect(statusCardLines(none)).toEqual(['Next: nothing'])
+  })
+
+  // A closing fence carries no info string (CommonMark): a tagged fence
+  // inside the block is a line of it, and the block closes at the bare one.
+  it('closes the block at a bare fence, never at a tagged one', () => {
+    const { body, card } = readStatusCard('Hi\n\n```clave-status\ndoing: x\n```js\n```')
+    expect(body).toBe('Hi')
+    expect(card?.doing).toBe('x ```js')
+  })
+
+  it('holds its limits at the figures the guide gives', () => {
+    expect(STATUS_DECIDE_MAX).toBe(5)
+    expect(STATUS_FIELD_MAX).toBe(600)
   })
 
   it('takes the last block when an earlier one was written mid-message', () => {
@@ -269,6 +319,22 @@ describe('holdStatusTail', () => {
     const close = code.lastIndexOf('```') + 3
     expect(shown(close)).toBe(code.slice(0, close))
     expect(shown(code.length)).toBe(code)
+  })
+
+  // The verifier's finding (round 1): fences the reader takes for the block's
+  // were shown as code while they streamed.
+  it('holds every fence the reader takes for the block, from its first run', () => {
+    for (const opening of [
+      '````clave-st',
+      '``` clave-st',
+      '~~~clave-st',
+      '~~~',
+      '````',
+      '   ```cla'
+    ])
+      expect(holdStatusTail(`Hi\n${opening}`), opening).toEqual({ body: 'Hi\n', held: opening })
+    // Four spaces are an indented line, never a fence.
+    expect(holdStatusTail('Hi\n    ```cla')).toEqual({ body: 'Hi\n    ```cla', held: '' })
   })
 
   it('lets go of a block once words follow it', () => {

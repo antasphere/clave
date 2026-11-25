@@ -9,6 +9,7 @@ import {
   checkStyleDraft,
   composeStyleText,
   findStyle,
+  messageWithoutStyle,
   isReservedStyleId,
   styleAsFirstMessage,
   styleIdFor
@@ -71,6 +72,23 @@ describe('styleAsFirstMessage', () => {
     expect(sent).toContain('Be short.')
     expect(sent.endsWith('Fix the test\nplease')).toBe(true)
     expect(sent.indexOf('Be short.')).toBeLessThan(sent.indexOf('Fix the test'))
+  })
+})
+
+describe('messageWithoutStyle', () => {
+  it('gives back the message the person wrote from what was sent with a style', () => {
+    const message = 'Fix the test\nplease'
+    expect(messageWithoutStyle(styleAsFirstMessage('Be short.', message))).toBe(message)
+    // The built-in styles hold blank lines and a fenced block: still one cut.
+    for (const style of BUILT_IN_STYLES)
+      expect(messageWithoutStyle(styleAsFirstMessage(composeStyleText(style), message))).toBe(
+        message
+      )
+  })
+
+  it('leaves a message that carries no style as it is', () => {
+    expect(messageWithoutStyle('My message:\n\nhello')).toBe('My message:\n\nhello')
+    expect(messageWithoutStyle('')).toBe('')
   })
 })
 
@@ -138,6 +156,15 @@ describe('findStyle', () => {
     expect(findStyle(styles, 'quiet')).toBe(BUILT_IN_STYLES[1])
     expect(findStyle(styles, ' DENSE ')).toBe(mine)
     expect(findStyle(styles, 'Brief')).toBe(BUILT_IN_STYLES[0])
+  })
+
+  // The verifier's gap (round 1): every name above is its id in another
+  // case, so a lookup that forgot the name stayed green.
+  it('finds a style by a name that is not its id', () => {
+    const notes = { ...mine, id: 'field-notes', name: 'Field notes' }
+    expect(findStyle([...styles, notes], 'Field notes')).toBe(notes)
+    expect(findStyle([...styles, notes], 'field NOTES')).toBe(notes)
+    expect(findStyle([...styles, notes], 'field-notes')).toBe(notes)
   })
 
   it('reads the word for no style, and says when a style is unknown', () => {

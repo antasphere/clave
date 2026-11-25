@@ -66,19 +66,36 @@ type Key = 'doing' | 'where' | 'decide' | 'next'
  *  which a model adds from habit. */
 const FIELD = /^\s*(?:[-*]\s+)?(?:\*\*)?(doing|where|decide|next)(?:\*\*)?\s*:(?:\*\*)?\s*(.*)$/i
 
-/** What "nothing is owed" reads as in a `next` or a `decide` line: the
- *  rule's own word, with or without what a model adds after it ("nothing for
- *  now"), or a dash. */
-const NOTHING = /^["'“”‘’]?\s*(?:(?:nothing|none|n\/a|no action)\b.*|-+|—)$/i
-/** Whether a line says nothing is owed. A line that opens on the word and
- *  then asks something ("Nothing else, or the rename too?") is a question. */
-const saysNothing = (value: string): boolean => NOTHING.test(value) && !value.includes('?')
+/** The word that says nothing is owed, opening a `next` or a `decide` line. */
+const NOTHING = /^(?:nothing|none|n\/a|no action)\b/i
+/** The most words a line that says nothing runs to: the word and the few a
+ *  model adds after it ("nothing for now", "none needed from you"). */
+const NOTHING_WORDS = 4
+/**
+ * Whether a `next` or a `decide` line says nothing is owed: the rule's own
+ * word alone, with the few words a model adds, or a dash. A line that opens
+ * on the word and goes on to say something ("None of the migrations ran:
+ * run them by hand", "Nothing else, or the rename too?") is the agent's word
+ * and is kept. Losing a real ask is the one silent loss here, so the test
+ * is narrow: a longer line, a colon or a question is never nothing.
+ */
+function saysNothing(value: string): boolean {
+  const said = value
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’.!]+$/g, '')
+    .trim()
+  if (/^[-–—]+$/.test(said)) return true
+  if (!NOTHING.test(said)) return false
+  return !/[?:;]/.test(said) && said.split(/\s+/).length <= NOTHING_WORDS
+}
 
 const clip = (value: string): string =>
   value.length > STATUS_FIELD_MAX ? `${value.slice(0, STATUS_FIELD_MAX - 1).trimEnd()}…` : value
 
 /** The fields of a block's inner lines, or null when it names none. A line
- *  that opens with no key continues the field before it (a model wraps). */
+ *  that opens with no key continues the field before it (a model wraps). A
+ *  block that names a field and says nothing in it ("next: nothing" alone)
+ *  is still the agent's status: a card that owes nothing, never raw text. */
 function readFields(lines: readonly string[]): StatusCard | null {
   const card: StatusCard = { doing: null, where: null, decide: [], next: null }
   let last: { key: Key; at: number } | null = null
@@ -115,8 +132,6 @@ function readFields(lines: readonly string[]): StatusCard | null {
   }
   if (!named) return null
   if (card.next !== null && saysNothing(card.next)) card.next = null
-  if (card.doing === null && card.where === null && card.next === null && !card.decide.length)
-    return null
   return card
 }
 
@@ -192,13 +207,14 @@ export function readStatusCard(text: string): { body: string; card: StatusCard |
   return { body: text.slice(0, found.start).trimEnd(), card }
 }
 
-/** The start of a fence line that may still become the block's opening:
- *  ``` alone, or any prefix of the tagged fence, as the stream delivers it. */
+/** The start of a fence line that may still become the block's opening: a
+ *  fence alone, or one followed by the beginning of the tag, as the stream
+ *  delivers it. Every fence `fenceOf` takes for the block's is held: three
+ *  backticks or more, tildes, a space before the tag. */
 function mayOpenStatus(line: string): boolean {
-  const match = /^ {0,3}(`{3,})(.*)$/.exec(line)
+  const match = /^ {0,3}(?:`{3,}|~{3,})(.*)$/.exec(line)
   if (!match) return false
-  if (match[1].length !== 3) return false
-  return STATUS_FENCE.startsWith(match[2].toLowerCase())
+  return STATUS_FENCE.startsWith(match[1].trimStart().toLowerCase())
 }
 
 /**
