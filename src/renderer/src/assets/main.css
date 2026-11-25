@@ -3699,3 +3699,24 @@ body.reorder-dragging * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Back and Forward (PRDCT-5155) ──
+   The list a right-click on either toolbar button opens: one row per place,
+   its glyph and its name. A long name (a tab, its artefact and another
+   workspace's name) is cut short rather than the menu grown across the
+   window. */
+.nav-history-menu {
+  max-width: 24rem;
+}
+.nav-history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--menu-item-gap);
+  min-width: 0;
+}
+.nav-history-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
