@@ -20,6 +20,7 @@ import type {
   ReviewEvent
 } from '../shared/github-pull'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
 import type { NestResult } from '@clave/contract/nest-rules'
 import type { TimelinePage } from '@clave/contract/timeline'
 
@@ -573,6 +574,9 @@ export interface SessionRecord {
   /** Which wave or lane the tab works on, its role and its standing
    *  (PRDCT-4123). Absent = an ordinary tab. */
   work?: WorkAssignment
+  /** Which projects the tab works on, as Jev last read it (PRDCT-5179).
+   *  Absent = never read. */
+  projects?: TabProjects
   /** The conversation came from another provider (PRDCT-4300): which, and
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. */

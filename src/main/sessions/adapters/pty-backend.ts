@@ -39,6 +39,7 @@ import { lineageOf } from '../lineage'
 import { newOpencodeSessionId } from '../../opencode-session-id'
 import { recordHarnessStart } from '../../usage-ledger'
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import { sanitizeTabProjects, type TabProjects } from '@clave/contract/tab-projects-rules'
 import type { NestRecord } from '@clave/contract/nest-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
@@ -684,6 +685,10 @@ export interface SessionRecord {
    *  (PRDCT-4123): carried across adoption like spawnedBy, changed only
    *  through the server's ChangeSessionWork. */
   work?: WorkAssignment
+  /** Which projects the tab works on, as Jev last read it (PRDCT-5179):
+   *  carried across adoption and restarts like work, written only by the
+   *  server's ReadTabProjects. */
+  projects?: TabProjects
   /** The conversation came from another provider (PRDCT-4300): which, and
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. The tab's first card reads it. */
@@ -777,7 +782,7 @@ function readSessionRecord(key: string): SessionRecord | null {
   sessionRecordsDir()
   const raw = readJson(lazyTerminalPorts.storage, recordDocument(key))
   return raw && typeof raw === 'object'
-    ? withValidWork(migrateSessionAdapterRecord(raw as SessionRecord))
+    ? withValidProjects(withValidWork(migrateSessionAdapterRecord(raw as SessionRecord)))
     : null
 }
 
@@ -792,6 +797,16 @@ function withValidWork(meta: SessionRecord): SessionRecord {
   const work = sanitizeWork(meta.work)
   if (work) meta.work = work
   else delete meta.work
+  return meta
+}
+
+/** The same rule for a tab's reading (PRDCT-5179, `sanitizeTabProjects`): a
+ *  malformed one is dropped alone and the record loads whole. */
+function withValidProjects(meta: SessionRecord): SessionRecord {
+  if (!('projects' in meta)) return meta
+  const projects = sanitizeTabProjects(meta.projects)
+  if (projects) meta.projects = projects
+  else delete meta.projects
   return meta
 }
 
@@ -1010,6 +1025,8 @@ export interface PtySpawnOptions {
    *  (pty-manager `restartSpawn`), never from a client; a spawn without it
    *  keeps the previous record's. */
   work?: WorkAssignment
+  /** The reading a restart carries (PRDCT-5179), the same way as `work`. */
+  projects?: TabProjects
   /** The restart that changes the tab's provider says where the conversation
    *  came from (PRDCT-4300); written to the record, read by the first card. */
   continuedFrom?: ContinuedFrom
@@ -1565,7 +1582,9 @@ export class PtyBackend {
       openedBy: lineageOf(id, options?.openedBy, previous?.openedBy),
       // Which work it does (PRDCT-4123), the same way: a restart's, read off
       // the record before its kill, else what the record already said.
-      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work)
+      work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work),
+      // Which projects it works on (PRDCT-5179), the same way.
+      projects: sanitizeTabProjects(options?.projects) ?? sanitizeTabProjects(previous?.projects)
     }
     let recordKey: string | null = null
 
@@ -1912,6 +1931,17 @@ export class PtyBackend {
     return writeSessionRecord({ ...meta, work: work ?? undefined })
   }
 
+  /** Persist (or clear, with null) which projects the tab works on, as Jev
+   *  read it (PRDCT-5179): the one write behind the server's ReadTabProjects.
+   *  Mirrors setSessionWork, and answers whether a record was written. */
+  setSessionProjects(id: string, projects: TabProjects | null): boolean {
+    const key = this.recordKeyForSession(id)
+    if (!key) return false
+    const meta = readSessionRecord(key)
+    if (!meta) return false
+    return writeSessionRecord({ ...meta, projects: projects ?? undefined })
+  }
+
   /** Every record as the nesting rule reads it (PRDCT-4997), read without
    *  touching anything, as `listWorkAssignments` is: no tmux call, no
    *  pruning. The tab it is nested under is its `spawnedBy` when that is a
@@ -2121,7 +2151,7 @@ export class PtyBackend {
       const raw = readJson(storage, `${SESSION_RECORDS_FOLDER}/${file}`)
       const meta: SessionRecord | null =
         raw && typeof raw === 'object'
-          ? withValidWork(migrateSessionAdapterRecord(raw as SessionRecord))
+          ? withValidProjects(withValidWork(migrateSessionAdapterRecord(raw as SessionRecord)))
           : null
       if (meta && meta.antigravityMode === undefined) {
         // Legacy records (written before the Antigravity switch) carry the old

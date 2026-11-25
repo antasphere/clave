@@ -81,6 +81,7 @@ function permissionDefaultFor(family: LauncherFamily): string | undefined {
     : undefined
 }
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import { sanitizeTabProjects, type TabProjects } from '@clave/contract/tab-projects-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
   familyOfOptions,
@@ -881,6 +882,8 @@ class PtyManager {
       ...(options?.effort !== undefined ? { effort: options.effort } : {}),
       // Which work it does (PRDCT-4123): a restart's, else the record's.
       work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work),
+      // Which projects it works on (PRDCT-5179), the same way.
+      projects: sanitizeTabProjects(options?.projects) ?? sanitizeTabProjects(previous?.projects),
       // Where the conversation came from (PRDCT-4300): a restart's, else the
       // record's, so a converted tab keeps its card across an account switch.
       ...((options?.continuedFrom ?? previous?.continuedFrom)
@@ -1263,6 +1266,9 @@ class PtyManager {
       // them, and a change of work since (a handover accepted, a lane left)
       // wrote the record alone, so a second restart would bring the old back.
       work: ptyBackend.getSessionRecord(id)?.work,
+      // Which projects it works on (PRDCT-5179): the record's, for the same
+      // reason; a reading made since the spawn wrote the record alone.
+      projects: ptyBackend.getSessionRecord(id)?.projects,
       // The mode, the model and the effort the chat was RUNNING on
       // (PRDCT-4191), from the record the provider's words were written to,
       // for the same reason: the spawn's options are the launch's.
@@ -1371,6 +1377,11 @@ class PtyManager {
    *  keeps no record. The host's `changeWork` is the only caller. */
   setSessionWork(id: string, work: WorkAssignment | null): boolean {
     return ptyBackend.setSessionWork(id, work)
+  }
+  /** Which projects the tab works on, on its record (PRDCT-5179); false when
+   *  it keeps no record. The decisions' host is the only caller. */
+  setSessionProjects(id: string, projects: TabProjects | null): boolean {
+    return ptyBackend.setSessionProjects(id, projects)
   }
   /** Every record's work assignment, read without side effects (PRDCT-4123). */
   listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {

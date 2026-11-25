@@ -15,6 +15,7 @@ import { Command, Query } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from './errors'
 import { LaunchProfileView } from './settings/launch-profiles'
 import { WorkAssignment, WorkChange, WorkChangeRefused, WorkRename, WorkUpdate } from './work'
+import { TabProjects } from './tab-projects'
 
 export const AgentState = Schema.Literal('idle', 'working', 'blocked', 'done', 'ended')
 export type AgentState = typeof AgentState.Type
@@ -867,6 +868,8 @@ export const SessionRecord = Schema.Struct({
   /** The reasoning effort the chat was last running at, the same way. */
   effort: Schema.optional(Schema.String),
   work: Schema.optional(WorkAssignment),
+  /** Which projects the tab works on, as Jev last read it (PRDCT-5179). */
+  projects: Schema.optional(TabProjects),
   /** The conversation came from another provider (PRDCT-4300). */
   continuedFrom: Schema.optional(ContinuedFrom),
   /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes (PRDCT-4427),

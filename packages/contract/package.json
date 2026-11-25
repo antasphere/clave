@@ -20,6 +20,7 @@
     "./work-rules": "./src/work-rules.ts",
     "./nest-rules": "./src/nest-rules.ts",
     "./tab-projects-rules": "./src/tab-projects-rules.ts",
+    "./tab-projects": "./src/tab-projects.ts",
     "./settings": "./src/settings/index.ts",
     "./sidebar": "./src/sidebar/index.ts",
     "./sidebar/ops": "./src/sidebar/ops.ts",
