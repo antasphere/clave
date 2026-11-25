@@ -1191,6 +1191,9 @@ export interface PtySession {
   model?: string
   piProvider?: string
   piThinking?: PiThinkingLevel
+  /** The id of the writing style the agent was given at this launch
+   *  (PRDCT-5166), the one its record names; absent for a tab on none. */
+  writingStyle?: string
   /** Set when this session is backed by a tmux session (the tmux session name). */
   tmuxName?: string
   /** When the conversation started (see SessionRecord.startedAt). */
@@ -1708,6 +1711,9 @@ export class PtyBackend {
     if (model) session.model = model
     if (piProvider) session.piProvider = piProvider
     if (piThinking) session.piThinking = piThinking
+    // The style the record names (PRDCT-5166), and on the same condition, so
+    // the spawn's answer and the record never disagree.
+    if (styleApplied && options?.writingStyle) session.writingStyle = options.writingStyle
     if (tmuxName) session.tmuxName = tmuxName
     this.sessions.set(id, session)
     return session

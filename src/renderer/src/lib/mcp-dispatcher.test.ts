@@ -169,6 +169,30 @@ describe('clave_open_session on the window road', () => {
     ).rejects.toThrow(new Error(reason))
   })
 
+  // PRDCT-5166: the tab carries the style its spawn says it applied, which
+  // is what this window's clave_list reads.
+  it('puts the style the spawn applied on the tab, and none when it applied none', async () => {
+    spawnSession.mockImplementationOnce(async (cwd: string) => ({
+      id: 'styled',
+      cwd,
+      folderName: 'repo',
+      alive: true,
+      writingStyle: 'quiet'
+    }))
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'Quiet' })
+    const tab = (id: string): Record<string, unknown> | undefined =>
+      useSessionStore.getState().sessions.find((s) => s.id === id) as never
+    expect(tab('styled')?.writingStyle).toBe('quiet')
+    spawnSession.mockImplementationOnce(async (cwd: string) => ({
+      id: 'plain',
+      cwd,
+      folderName: 'repo',
+      alive: true
+    }))
+    await openSessionProgrammatically({ cwd: '/repo', mode: 'claude', style: 'none' })
+    expect(tab('plain')?.writingStyle).toBeUndefined()
+  })
+
   it("opens a chat on the global default's chat form, the one the launcher would open", async () => {
     useLaunchProfileStore.setState({
       preferences: preferences({ globalDefaults: { codex: 'yolo' } }),

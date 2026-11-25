@@ -260,14 +260,6 @@ function listedAccount(
   return { id, label, removed, exhausted: sessionAccountExhausted(s) }
 }
 
-/** The writing style a tab's record keeps (PRDCT-5166), as the session
- *  store carries it once the record's field is mapped onto the tab; read
- *  loosely until the store's type declares it. */
-function styleOfTab(session: object): string | undefined {
-  const style = (session as { writingStyle?: unknown }).writingStyle
-  return typeof style === 'string' ? style : undefined
-}
-
 function handleList(payload: { callerSessionId?: string; workspace?: string }): unknown {
   const state = useSessionStore.getState()
   const wsState = useWorkspaceStore.getState()
@@ -295,7 +287,7 @@ function handleList(payload: { callerSessionId?: string; workspace?: string }): 
       // above is who opened it.
       nestedUnder: s.spawnedBy ?? null,
       // The writing style it was opened with (PRDCT-5166); no key for none.
-      ...listedStyle(styleOfTab(s)),
+      ...listedStyle(s.writingStyle),
       // The account the tab runs on (Claude or Codex), in its OWNER's list: a
       // server tab names the server's account (PRDCT-4328); the Default when
       // the tab predates accounts or was launched without naming one.
@@ -710,6 +702,8 @@ export async function openSessionProgrammatically(payload: {
       launchProfileId: info.launchProfileId,
       piProvider: info.piProvider,
       piThinking: info.piThinking,
+      // The writing style the spawn applied (PRDCT-5166), for clave_list.
+      writingStyle: info.writingStyle,
       claudeProfileId: claudeProfile?.id,
       claudeProfileLabel: claudeProfile?.label,
       codexAccountId: codexAccount?.id,

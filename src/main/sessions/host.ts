@@ -105,7 +105,10 @@ const asInfo = (result: SessionInfoResult): SessionInfo => ({
   ...(result.launchProfileId !== undefined && { launchProfileId: result.launchProfileId }),
   ...(result.model !== undefined && { model: result.model }),
   ...(result.piProvider !== undefined && { piProvider: result.piProvider }),
-  ...(result.piThinking !== undefined && { piThinking: result.piThinking })
+  ...(result.piThinking !== undefined && { piThinking: result.piThinking }),
+  // The style the agent was given (PRDCT-5166): picked here like the rest,
+  // so a field this list does not name never reaches a window.
+  ...(result.writingStyle !== undefined && { writingStyle: result.writingStyle })
 })
 
 const bytesDecoder = new TextDecoder()

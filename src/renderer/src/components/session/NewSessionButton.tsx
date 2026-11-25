@@ -63,6 +63,7 @@ export function NewSessionButton(): React.JSX.Element {
         launchProfileId: sessionInfo.launchProfileId,
         piProvider: sessionInfo.piProvider,
         piThinking: sessionInfo.piThinking,
+        writingStyle: sessionInfo.writingStyle,
         sessionType: 'local'
       })
     } catch (err) {

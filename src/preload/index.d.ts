@@ -487,6 +487,9 @@ export interface SessionInfo {
   model?: string
   piProvider?: string
   piThinking?: PiThinkingLevel
+  /** The id of the writing style the agent was given (PRDCT-5166); absent
+   *  for a tab on none. */
+  writingStyle?: string
 }
 
 /** Who owns a session that is not a tab of its own — mirrors SessionLink in

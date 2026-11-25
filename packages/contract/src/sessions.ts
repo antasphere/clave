@@ -628,7 +628,10 @@ export const SessionInfo = Schema.Struct({
   launchProfileId: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
   piProvider: Schema.optional(Schema.String),
-  piThinking: Schema.optional(Schema.String)
+  piThinking: Schema.optional(Schema.String),
+  /** The id of the writing style the agent was given (PRDCT-5166); absent
+   *  for a tab on none. */
+  writingStyle: Schema.optional(Schema.String)
 })
 export type SessionInfo = typeof SessionInfo.Type
 

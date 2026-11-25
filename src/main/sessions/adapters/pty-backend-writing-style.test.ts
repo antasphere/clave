@@ -193,3 +193,28 @@ describe("a terminal tab's record keeps its style", () => {
     expect(backend.getSessionRecord(id)?.writingStyle).toBeUndefined()
   })
 })
+
+// The spawn's answer says the style applied (PRDCT-5166): the window's
+// `clave_list` reads it off the tab, so it must agree with the record.
+describe("a terminal tab's spawn answers the style applied", () => {
+  it('names the style the agent was given', () => {
+    const session = backend.spawn(cwd, { tmuxMode: false, claudeMode: true, ...styled })
+    expect(session.writingStyle).toBe('dense')
+    expect(backend.getSessionRecord(session.id)?.writingStyle).toBe('dense')
+  })
+
+  it('names none for a tab on none, an id with no text, Antigravity or a plain terminal', () => {
+    expect(backend.spawn(cwd, { tmuxMode: false, claudeMode: true })).not.toHaveProperty(
+      'writingStyle'
+    )
+    expect(
+      backend.spawn(cwd, { tmuxMode: false, claudeMode: true, writingStyle: 'dense' })
+    ).not.toHaveProperty('writingStyle')
+    expect(
+      backend.spawn(cwd, { tmuxMode: false, antigravityMode: true, ...styled })
+    ).not.toHaveProperty('writingStyle')
+    expect(
+      backend.spawn(cwd, { tmuxMode: false, claudeMode: false, ...styled })
+    ).not.toHaveProperty('writingStyle')
+  })
+})

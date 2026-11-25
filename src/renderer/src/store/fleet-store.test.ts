@@ -441,6 +441,17 @@ describe('who opened a server tab, named as this window names it (PRDCT-4193)', 
     expect(session?.openedBy).toBe(resourceKey('session', owner, 'opener-raw'))
     expect(session?.spawnedBy).toBe(resourceKey('session', owner, 'nester-raw'))
   })
+  // PRDCT-5166: the window's clave_list reads a server tab's style off it.
+  it('carries the writing style its server record names, and none when it names none', () => {
+    const styled = withRecord(`s-${serial}`, { writingStyle: 'quiet' })
+    fleet.applyFleetSnapshot(styled)
+    const tabOf = (snap: FleetSnapshot): Session | undefined =>
+      store.useSessionStore.getState().sessions.find((s) => s.id === snap.sessions[0].id)
+    expect(tabOf(styled)?.writingStyle).toBe('quiet')
+    const plain = withRecord(`s-${serial}-plain`, {})
+    fleet.applyFleetSnapshot(plain)
+    expect(tabOf(plain)?.writingStyle).toBeUndefined()
+  })
   it('leaves both undefined when the record names nobody', () => {
     const a = withRecord(`s-${serial}`, {})
     fleet.applyFleetSnapshot(a)

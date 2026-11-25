@@ -515,7 +515,12 @@ class PtyManager {
           alive: true,
           ptyProcess: null,
           launchProfileId: profileId,
-          model: options?.model
+          model: options?.model,
+          // The style the chat's record names (PRDCT-5166), on the record's
+          // own condition, so the spawn's answer says the style applied.
+          ...(options?.writingStyle && options.writingStyleText
+            ? { writingStyle: options.writingStyle }
+            : {})
         }
       : ptyAdapter.prepare(cwd, {
           ...options,

@@ -944,17 +944,28 @@ describe('a chat tab starts with its writing style, and keeps it (PRDCT-5166)', 
     (mocks.backend.writeEventSessionRecord.mock.calls.at(-1) as unknown[])[0] as never
 
   it("a fresh chat runs on the machine's default and its record names it", async () => {
-    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    const session = await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
     expect(configured()).toMatchObject({ writingStyle: 'dense', writingStyleText: 'Be short.' })
     expect(recorded().writingStyle).toBe('dense')
+    // The spawn's answer says the style applied, as the record does.
+    expect(session.writingStyle).toBe('dense')
   })
 
   it('a launch that names a style gets it; one that says none gets none, recorded as none', async () => {
-    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', writingStyle: 'Quiet' })
+    const named = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'Quiet'
+    })
     expect(configured()).toMatchObject({ writingStyle: 'quiet', writingStyleText: quietText })
-    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', writingStyle: 'none' })
+    // The answer names the style by its id, never by the name the launch gave.
+    expect(named.writingStyle).toBe('quiet')
+    const none = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'none'
+    })
     expect(configured().writingStyleText).toBeUndefined()
     expect(recorded()).not.toHaveProperty('writingStyle')
+    expect(none).not.toHaveProperty('writingStyle')
   })
 
   it('a style the machine does not have refuses the spawn before any process', async () => {
