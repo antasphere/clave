@@ -28,7 +28,8 @@
  * Where the keyboard focus lands after a move is checked by typing: what is
  * typed after Back must reach the restored tab's terminal (the terminal
  * journal says which tab received it), as it does after a click on the tab's
- * own sidebar row.
+ * own sidebar row, and a chat tab's composer (on an app of its own, the echo
+ * adapter's chat).
  */
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import {
@@ -41,6 +42,7 @@ import {
   until,
   writeJournal
 } from './harness.mjs'
+import { openChat } from './chat-view.spec.mjs'
 
 const DIR = userDataDir('navigation-history')
 const ROOT = fixturePath('navigation-history-root')
@@ -234,6 +236,12 @@ async function sideButton(app, win, button, selector) {
 }
 
 export async function run(t) {
+  await walk(t)
+  await chatTab(t)
+}
+
+/** The walk through every kind of place, on terminal tabs. */
+async function walk(t) {
   for (const root of [ROOT, ELSEWHERE_ROOT]) {
     rmSync(root, { recursive: true, force: true })
     mkdirSync(root, { recursive: true })
@@ -741,5 +749,120 @@ export async function run(t) {
     )
   } finally {
     await app.close()
+  }
+}
+
+/**
+ * A chat tab has no terminal: what is typed after a move goes to its composer. The chat view
+ * puts the caret back in its composer when its pane comes back on screen (Back from
+ * Settings), but not when the pane stays on screen with the same tab focused: Back from a
+ * mosaic of the chat and a terminal, focused on the chat, to the chat alone. Both roads must
+ * end with the keyboard in the visible composer. The chat is the echo adapter's, on an app of
+ * its own (`openChat`).
+ */
+async function chatTab(t) {
+  const chat = await openChat('navigation-history-chat', [], undefined, {}, null, {
+    server: 'in-process'
+  })
+  const { app, win, record } = chat
+  try {
+    const id = record.id
+    /** Where the keyboard is: the chat pane it sits in, and the element. */
+    const keyboard = () =>
+      win.evaluate(() => {
+        const el = document.activeElement
+        return {
+          tag: el?.tagName ?? null,
+          chat: el?.closest('.chat-host')?.getAttribute('data-session-id') ?? null,
+          nav: el?.getAttribute?.('data-nav') ?? null
+        }
+      })
+    /** What the tab's visible composer holds. */
+    const composer = () =>
+      win.evaluate(
+        (id) =>
+          [
+            ...document.querySelectorAll(`.chat-host[data-session-id="${CSS.escape(id)}"] textarea`)
+          ].find((el) => el.offsetParent !== null)?.value ?? null,
+        id
+      )
+    const typedIntoComposer = async (marker) => {
+      await win.keyboard.type(marker)
+      return until(async () => (((await composer()) ?? '').includes(marker) ? true : null), {
+        tries: 15,
+        gapMs: 150
+      })
+    }
+
+    let s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [id]))
+    t.check(
+      'a chat tab is a place',
+      same(current(s)?.tabs, [id]) && current(s)?.view === 'terminals',
+      trail(s)
+    )
+    const at = s?.index
+    await win.keyboard.press('Meta+,')
+    s = await snapshotUntil(win, (x) => x.index === at + 1 && current(x)?.view === 'settings')
+    t.check('Settings over the chat tab is a place', current(s)?.view === 'settings', trail(s))
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === at)
+    await sleep(300)
+    const byButton = await keyboard()
+    const buttonTyped = await typedIntoComposer('qzchatbutton')
+    t.check(
+      'after a click on Back from Settings to a chat tab, typing reaches its composer',
+      s?.index === at && buttonTyped === true,
+      { keyboard: byButton, composer: await composer(), trail: trail(s) }
+    )
+
+    await win.keyboard.press('Meta+,')
+    s = await snapshotUntil(win, (x) => x.index === at + 1 && current(x)?.view === 'settings')
+    await win.keyboard.press('Meta+BracketLeft')
+    s = await snapshotUntil(win, (x) => x.index === at)
+    await sleep(300)
+    const byKey = await keyboard()
+    const keyTyped = await typedIntoComposer('qzchatkey')
+    t.check(
+      'after ⌘[ from Settings to a chat tab, typing reaches its composer',
+      s?.index === at && keyTyped === true,
+      { keyboard: byKey, composer: await composer(), trail: trail(s) }
+    )
+
+    // The pane stays on screen and the chat stays the focused tab: nothing the chat view
+    // watches changes, so the move itself must hand the composer the keyboard.
+    const T = await openTerminal(
+      app,
+      'Beside the chat',
+      `${fixturePath('navigation-history-chat')}-root`
+    )
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [T]))
+    await win.click(rowOf(id))
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [id]))
+    const alone = s?.index
+    await win.click(rowOf(T), { modifiers: ['Meta'] })
+    s = await snapshotUntil(win, (x) => x.index === alone + 1 && current(x)?.tabs.length === 2)
+    // A click in the chat's transcript, as on any tile, makes it the mosaic's focused tab.
+    await win
+      .locator(`.chat-host[data-session-id="${id}"] [data-testid="chat-view"]`)
+      .first()
+      .click()
+    s = await snapshotUntil(win, (x) => x.index === alone + 1 && current(x)?.focused === id)
+    t.check(
+      'a mosaic of the chat and a terminal, focused on the chat, is the next place',
+      same([...(current(s)?.tabs ?? [])].sort(), [id, T].sort()) && current(s)?.focused === id,
+      trail(s)
+    )
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === alone)
+    await sleep(300)
+    const byMosaic = await keyboard()
+    const mosaicTyped = await typedIntoComposer('qzchatmosaic')
+    t.check(
+      'after Back from that mosaic to the chat alone, typing reaches its composer',
+      s?.index === alone && same(current(s)?.tabs, [id]) && mosaicTyped === true,
+      { keyboard: byMosaic, composer: await composer(), trail: trail(s) }
+    )
+  } finally {
+    await chat.close()
   }
 }
