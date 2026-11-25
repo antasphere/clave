@@ -688,6 +688,12 @@ export interface SessionRecord {
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. The tab's first card reads it. */
   continuedFrom?: ContinuedFrom
+  /** The id of the writing style the tab was opened with (PRDCT-5166,
+   *  `src/shared/writing-styles.ts`): written at its first launch when a
+   *  style was applied, carried across adoption like the name, and read at
+   *  every later launch of the same tab, so a tab keeps its style. Absent
+   *  for a tab on no style. */
+  writingStyle?: string
   /** Populated only on the listAdoptableSessions() path (not persisted in
    *  the record). True when the backing tmux session is still running (app
    *  quit/reopen, no reboot) → reattach to the live process. False when the
@@ -959,6 +965,11 @@ export interface PtySpawnOptions {
   pluginDir?: string
   /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
   appendSystemPrompt?: string
+  /** The writing style the tab starts with (PRDCT-5166): what the launch
+   *  names (a style's id or exact name, or `none`), or, for a tab launched
+   *  again, the id its record keeps. Absent, the machine's default at a
+   *  first launch. Resolved by the manager's spawn, never by an adapter. */
+  writingStyle?: string
   /** Opt-in: run this session inside a persistent tmux session. */
   tmuxMode?: boolean
   /** Reattach to this exact existing tmux session instead of deriving a new

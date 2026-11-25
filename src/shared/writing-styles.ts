@@ -66,6 +66,11 @@ export interface WritingStylesView {
   claudeOutputStyle: { name: string } | null
 }
 
+/** What a server released before the writing styles is said to need. The
+ *  client says the same words (`packages/client/src/settings.ts`, which
+ *  cannot import this file; its test holds the two equal). */
+export const WRITING_STYLES_NEED_UPDATE = 'This server needs an update to show its writing styles.'
+
 export const WRITING_STYLE_LIMITS = {
   name: 60,
   description: 200,
