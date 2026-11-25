@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createServer } from 'node:http'
 import { startEmbedded, type EmbeddedServer } from '@clave/server'
 import { FakeSource } from '@clave/server/test-support'
 import { FakeSettingsSource } from '@clave/server/settings/test-support'
@@ -133,5 +134,56 @@ describe('the Antasphere account calls', () => {
     const error = await api.settings.antasphere.signIn().catch((e: unknown) => e)
     expect(error).toBeInstanceOf(CapabilityUnavailable)
     expect(error).toMatchObject({ capability: 'antasphereAccount' })
+  })
+})
+
+describe('the writing styles calls (PRDCT-5166)', () => {
+  it('lists, saves, sets the default, deletes, and sends a draft as it was given', async () => {
+    expect(await api.settings.writingStyles.list()).toEqual(fake.styles)
+    const draft = { name: 'Plain', description: '', text: 'Write plainly.', statusCard: false }
+    const saved = await api.settings.writingStyles.save(draft)
+    expect(saved.styles.at(-1)).toEqual({ id: 'plain', ...draft, builtIn: false })
+    expect(last('writingStyles.save')).toEqual([draft])
+    await api.settings.writingStyles.save({ ...draft, id: 'plain', statusCard: true })
+    expect(last('writingStyles.save')).toEqual([{ ...draft, id: 'plain', statusCard: true }])
+    expect((await api.settings.writingStyles.setDefault('plain')).defaultStyleId).toBe('plain')
+    expect((await api.settings.writingStyles.setDefault(null)).defaultStyleId).toBeNull()
+    expect(last('writingStyles.setDefault')).toEqual([null])
+    const removed = await api.settings.writingStyles.remove('plain')
+    expect(removed.styles.map((s) => s.id)).toEqual(['brief'])
+  })
+
+  it('throws the store’s refusal as the contract’s tagged error, its sentence as the message', async () => {
+    const error = await api.settings.writingStyles.importClaude().catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(SettingsRefused)
+    expect((error as Error).message).toBe('Claude Code has no output style of yours to import.')
+  })
+})
+
+describe('the writing styles of an older server (PRDCT-5166)', () => {
+  it('a router 404 on the writing styles routes is said as an update the server needs', async () => {
+    const { WritingStylesMissing, WRITING_STYLES_NEED_UPDATE } = await import('./settings')
+    const old = createServer((_request, response) => {
+      response
+        .writeHead(404, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ error: 'NotFound', message: 'route not found', correlationId: 'c' }))
+    })
+    await new Promise<void>((resolve) => old.listen(0, '127.0.0.1', resolve))
+    const { port } = old.address() as { port: number }
+    const older = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
+    try {
+      await expect(older.settings.writingStyles.list()).rejects.toBeInstanceOf(
+        WritingStylesMissing
+      )
+      await expect(older.settings.writingStyles.setDefault(null)).rejects.toThrow(
+        WRITING_STYLES_NEED_UPDATE
+      )
+      // The window reads the same words to say it (it cannot load the client).
+      const shared = await import('../../../src/shared/writing-styles')
+      expect(WRITING_STYLES_NEED_UPDATE).toBe(shared.WRITING_STYLES_NEED_UPDATE)
+    } finally {
+      await older.dispose()
+      await new Promise<void>((resolve) => old.close(() => resolve()))
+    }
   })
 })

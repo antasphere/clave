@@ -72,6 +72,7 @@ import type {
   HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
@@ -1025,6 +1026,15 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `fleetHelpers` / `fleetHelperSet`. */
   helpersList: () => Promise<HelperPreference[]>
   helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
+  /** This Mac's writing styles (PRDCT-5166): the built-in styles and its
+   *  own, the default a tab starts with, and Claude Code's output style.
+   *  Every write answers the whole view. A server's are `fleetWritingStyles`
+   *  and the `fleetWritingStyle*` members. */
+  writingStylesList: () => Promise<WritingStylesView>
+  writingStyleSave: (draft: WritingStyleDraft) => Promise<WritingStylesView>
+  writingStyleDelete: (id: string) => Promise<WritingStylesView>
+  writingStyleSetDefault: (id: string | null) => Promise<WritingStylesView>
+  writingStyleImportClaude: () => Promise<WritingStylesView>
   /** This Mac's integrations (PRDCT-4410): the ElevenLabs key sealed on the
    *  machine, its account check, the voice and model. Every write answers
    *  the status, which never carries the key. A server's are
