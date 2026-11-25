@@ -147,6 +147,27 @@ async function screenUntil(win, pred, ms = 6000) {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const sorted = (a) => [...a].sort()
 
+/** A recorded place as the person sees it, for telling two neighbouring rows of a list apart:
+ *  what `sameSpot` compares. A page over the tabs hides them; a mosaic's tabs count in any
+ *  order and whichever has the focus; a Settings or Extensions page is named by its label. */
+function spotOf(p) {
+  const covered =
+    ['settings', 'extensions', 'ongoing'].includes(p.view) ||
+    p.plugin !== null ||
+    p.groupView !== null ||
+    p.tabView !== null
+  return JSON.stringify([
+    p.workspaceId,
+    p.view,
+    p.view === 'settings' || p.view === 'extensions' ? p.label : null,
+    p.groupView,
+    p.tabView,
+    p.plugin,
+    p.beside,
+    covered ? null : sorted(p.tabs)
+  ])
+}
+
 /** Where the keyboard focus is: in a terminal tile (which one), on a toolbar button, on a
  *  sidebar row, or elsewhere. */
 function focusOf(win) {
@@ -819,6 +840,58 @@ async function walk(t) {
     t.check(
       'Back then shows the place before Settings: the mosaic, the closed tab left out',
       s?.index === underAt && seen.settings === null && same(seen.tiles, [C]),
+      { trail: trail(s), seen }
+    )
+
+    // ── 14. Back never lands on what is already on screen ─────────────────
+    // T1 → T2 → T1, then T2 closed: the T1 before T2 would show what is on screen.
+    const G = await openTerminal(app, 'Tab G')
+    s = await snapshotUntil(win, (x) => same(current(x)?.tabs, [G]))
+    const gAt = s?.index
+    await win.click(rowOf(C))
+    s = await snapshotUntil(win, (x) => x.index === gAt + 1 && same(current(x)?.tabs, [C]))
+    const beforeT1 = s?.index
+    for (const [i, id] of [A, G, A].entries()) {
+      await win.click(rowOf(id))
+      s = await snapshotUntil(
+        win,
+        (x) => x.index === beforeT1 + 1 + i && same(current(x)?.tabs, [id])
+      )
+    }
+    t.check(
+      'C, then A, G, A: four places',
+      same(
+        s?.places.slice(beforeT1).map((p) => p.tabs),
+        [[C], [A], [G], [A]]
+      ) && s.index === beforeT1 + 3,
+      trail(s)
+    )
+    await callMcp(app, 'closeSession', { sessionId: G })
+    await until(async () => ((await win.locator(rowOf(G)).count()) === 0 ? true : null))
+    await sleep(QUIET_MS)
+    await win.click(BACK, { button: 'right' })
+    const backList = win.locator('[data-nav-list="back"]')
+    await backList.waitFor({ timeout: 5000 }).catch(() => {})
+    const listed = await win
+      .locator('[data-nav-list="back"] [data-nav-entry]')
+      .evaluateAll((els) => els.map((el) => Number(el.getAttribute('data-nav-index'))))
+    s = await snapshot(win)
+    // The place on screen, then the list: no two neighbours are the same place.
+    const spots = [s.index, ...listed].map((i) => spotOf(s.places[i]))
+    const repeats = spots.flatMap((spot, i) => (i > 0 && spot === spots[i - 1] ? [i] : []))
+    t.check(
+      'with G closed, the Back list starts with C, and never names one place twice in a row',
+      listed[0] === beforeT1 && repeats.length === 0,
+      { listed, repeats, labels: listed.map((i) => s.places[i]?.label), trail: trail(s) }
+    )
+    await win.keyboard.press('Escape')
+    await backList.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {})
+    await win.click(BACK)
+    s = await snapshotUntil(win, (x) => x.index === beforeT1)
+    seen = await screenUntil(win, (x) => same(x.tiles, [C]))
+    t.check(
+      'and one Back lands on C, the place before the first A, not on A again',
+      s?.index === beforeT1 && same(seen.tiles, [C]),
       { trail: trail(s), seen }
     )
   } finally {

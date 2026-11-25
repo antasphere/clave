@@ -198,14 +198,18 @@ export function recordPlace(h: NavigationHistory, place: Place): NavigationHisto
   return { entries: entries.slice(overflow), index: entries.length - 1 - overflow }
 }
 
-/** The nearest entry in that direction whose place is still alive; null when none. */
+/** The nearest entry in that direction whose place is still alive and would show something
+ *  else than the place on screen (a T1 left for T2 and come back to, T2 then closed: one
+ *  Back goes past the first T1); null when none. */
 export function stepTarget(
   h: NavigationHistory,
   delta: -1 | 1,
   alive: (p: Place) => boolean
 ): number | null {
+  const current = h.entries[h.index]
   for (let i = h.index + delta; i >= 0 && i < h.entries.length; i += delta) {
-    if (alive(h.entries[i])) return i
+    const place = h.entries[i]
+    if (alive(place) && !(current && sameSpot(place, current))) return i
   }
   return null
 }
@@ -228,7 +232,9 @@ export function replaceAt(h: NavigationHistory, index: number, place: Place): Na
 }
 
 /** The alive places in that direction, nearest first, at most `limit`: the list a
- *  right-click on Back or Forward shows. */
+ *  right-click on Back or Forward shows. A place that would show the same as the row before
+ *  it (the place on screen, for the first row) is left out, so no place is listed twice in a
+ *  row and the first row is where one step goes (`stepTarget`). */
 export function placesToward(
   h: NavigationHistory,
   delta: -1 | 1,
@@ -236,8 +242,12 @@ export function placesToward(
   limit = 20
 ): Array<{ index: number; place: Place }> {
   const out: Array<{ index: number; place: Place }> = []
+  let last: Place | undefined = h.entries[h.index]
   for (let i = h.index + delta; i >= 0 && i < h.entries.length && out.length < limit; i += delta) {
-    if (alive(h.entries[i])) out.push({ index: i, place: h.entries[i] })
+    const place = h.entries[i]
+    if (!alive(place) || (last && sameSpot(place, last))) continue
+    out.push({ index: i, place })
+    last = place
   }
   return out
 }

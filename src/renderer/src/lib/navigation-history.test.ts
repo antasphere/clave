@@ -400,6 +400,66 @@ describe('placesToward', () => {
   })
 })
 
+describe('never onto what is already on screen (PRDCT-5155)', () => {
+  // T1 → T2 → T1, then T2 closed: the places of the walk, as the history holds them. Built
+  // entry by entry: a history only ever holds what recordPlace and the read-backs put there.
+  const start = tab('tab-0')
+  const t1 = tab('tab-1')
+  const t2 = tab('tab-2')
+  const t1Again = tab('tab-1')
+  const h: NavigationHistory = { entries: [start, t1, t2, t1Again], index: 3 }
+  const without =
+    (...gone: string[]) =>
+    (p: Place): boolean =>
+      !p.tabs.some((id) => gone.includes(id))
+
+  it('steps past a place that would show what is on screen, to the one before it', () => {
+    expect(stepTarget(h, -1, without('tab-2'))).toBe(0)
+    // With T2 still there, one Back shows it, as before.
+    expect(stepTarget(h, -1, without())).toBe(2)
+    // Forward the same way: from the first T1, past T2 gone, past T1 again: nothing.
+    expect(stepTarget(moveTo(h, 1), 1, without('tab-2'))).toBeNull()
+    // Another tile of the same mosaic shows what is on screen too.
+    const m1 = mosaic(['tab-1', 'tab-2'], 'tab-1')
+    const m2 = mosaic(['tab-2', 'tab-1'], 'tab-2')
+    const mh: NavigationHistory = { entries: [start, m1, m2], index: 2 }
+    expect(stepTarget(mh, -1, without())).toBe(0)
+    expect(stepTarget(moveTo(mh, 0), 1, without())).toBe(1)
+  })
+
+  it('lists each place once in a row, the first row where one Back goes', () => {
+    const rows = (x: NavigationHistory, delta: -1 | 1, alive: (p: Place) => boolean): number[] =>
+      placesToward(x, delta, alive).map((entry) => entry.index)
+    expect(rows(h, -1, without('tab-2'))).toEqual([0])
+    expect(rows(h, -1, without())).toEqual([2, 1, 0])
+    // The places of a longer walk, T1 and T2 taken turn about: never twice in a row.
+    const walked: NavigationHistory = {
+      entries: [start, t1, t2, tab('tab-1'), tab('tab-2'), tab('tab-1'), tab('tab-3')],
+      index: 6
+    }
+    expect(rows(walked, -1, without('tab-2'))).toEqual([5, 0])
+    expect(rows(walked, -1, without())).toEqual([5, 4, 3, 2, 1, 0])
+    expect(rows(moveTo(walked, 0), 1, without('tab-2'))).toEqual([1, 6])
+    for (const [x, delta, alive] of [
+      [h, -1, without('tab-2')],
+      [walked, -1, without('tab-2')],
+      [moveTo(walked, 0), 1, without('tab-2')],
+      [moveTo(walked, 3), 1, without('tab-3')]
+    ] as const) {
+      expect(rows(x, delta, alive)[0] ?? null).toBe(stepTarget(x, delta, alive))
+    }
+    // The limit counts the rows shown, not the entries passed over.
+    const pairs: NavigationHistory = {
+      entries: ['tab-a', 'tab-a', 'tab-b', 'tab-b', 'tab-c', 'tab-c', 'tab-d'].map((name) =>
+        tab(name)
+      ),
+      index: 6
+    }
+    expect(placesToward(pairs, -1, () => true, 2).map((entry) => entry.index)).toEqual([5, 3])
+    expect(rows(pairs, -1, () => true)).toEqual([5, 3, 1])
+  })
+})
+
 describe('moveTo and replaceAt', () => {
   const places = ['tab-0', 'tab-1', 'tab-2'].map((name) => tab(name))
   const h = walk(...places)
