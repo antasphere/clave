@@ -273,10 +273,12 @@ const FOCUS_DELAY_MS = 50
 
 /**
  * Give the keyboard to the place shown, where a click on its tab's row sends it: the focused
- * tab's terminal. The terminal pane focuses itself only when its tab BECOMES the focused one,
- * so a restore that kept the focused tab (Back from Settings, a page or a plugin's page to the
- * mosaic under it) left the keyboard on the button that moved, and typing reached nothing. A
- * document being edited beside the tab keeps the keyboard, as it does for the pane; a move made
+ * tab's terminal, or for a tab whose pane is a view (a chat tab) its visible composer. Each
+ * pane focuses itself only when its tab BECOMES the focused one (a chat view also when its pane
+ * comes back on screen), so a restore that kept the focused tab on screen (Back from Settings,
+ * a page or a plugin's page to the mosaic under it; from a mosaic to its focused chat tab
+ * alone) left the keyboard on the button that moved, and typing reached nothing. A document
+ * being edited beside the tab keeps the keyboard, as it does for the pane; a move made
  * meanwhile wins.
  */
 export function focusPlace(p: Place): void {
@@ -285,7 +287,17 @@ export function focusPlace(p: Place): void {
   setTimeout(() => {
     if (useSessionStore.getState().focusedSessionId !== id) return
     if (document.activeElement?.closest('[data-testid="linked-document-panel"]')) return
-    getRegisteredTerminal(id)?.focus()
+    const terminal = getRegisteredTerminal(id)
+    if (terminal) {
+      terminal.focus()
+      return
+    }
+    // Every view of the session stays mounted, one on screen: its composer is the one laid
+    // out (as the pane's own search gives the keyboard back, views/registry.tsx).
+    const composers = document.querySelectorAll<HTMLTextAreaElement>(
+      `.chat-host[data-session-id="${CSS.escape(id)}"] textarea`
+    )
+    ;[...composers].find((el) => el.offsetParent !== null)?.focus()
   }, FOCUS_DELAY_MS)
 }
 
