@@ -1478,6 +1478,37 @@ describe('a writing style on the first message (PRDCT-5166)', () => {
     expect(sent(state)).toEqual(['back'])
   })
 
+  /** The person's messages of a conversation loaded back. */
+  const replayed = (s: Session): string[] =>
+    s.adapter
+      .history(s.handle)
+      .flatMap((item) => (item.event.type === 'user_message' ? [item.event.text] : []))
+  const conversationOf = (s: Session): string =>
+    (s.events.find((e) => e.type === 'session_meta') as { providerSessionId: string })
+      .providerSessionId
+
+  it('a conversation loaded back shows the message the person wrote, not the style sent with it', async () => {
+    const state = tmp()
+    const first = await agy({}, { state })
+    await turn(first, 'hello')
+    await turn(first, 'again')
+    await first.adapter.kill(first.handle)
+    // The agent kept the style with the first message, as it was sent.
+    expect(sent(state)[0]).toBe(styleAsFirstMessage(STYLE, 'hello'))
+    const again = await agy({ resume: conversationOf(first) }, { state })
+    expect(replayed(again)).toEqual(['hello', 'again'])
+  })
+
+  it("leaves an OpenCode chat's past as it was sent, even when it opens the same way", async () => {
+    const state = tmp()
+    const typed = styleAsFirstMessage(STYLE, 'hello')
+    const first = await open({}, { state })
+    await turn(first, typed)
+    await first.adapter.kill(first.handle)
+    const again = await open({ resume: conversationOf(first) }, { state })
+    expect(replayed(again)).toEqual([typed])
+  })
+
   it('never goes to an OpenCode chat, which reads its style from a file', async () => {
     const s = await open({}, { styleText: STYLE })
     await turn(s, 'hello')

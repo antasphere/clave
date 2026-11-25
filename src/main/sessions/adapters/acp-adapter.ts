@@ -36,7 +36,11 @@ import { connectionHandover } from '../../connection-handover'
 import { lazyTerminalPorts } from '../../ports/terminals'
 import { readClaveMcpEndpoint, withOpencodeClaveTools } from '../../clave-tools-launch'
 import { OPENCODE_CONFIG_ENV } from '../../provider-injection'
-import { STYLE_SUPPORT, styleAsFirstMessage } from '../../../shared/writing-styles'
+import {
+  STYLE_SUPPORT,
+  messageWithoutStyle,
+  styleAsFirstMessage
+} from '../../../shared/writing-styles'
 import type { LauncherFamily } from '../../../shared/agent-launch'
 
 /**
@@ -229,6 +233,10 @@ interface HandleState {
    *  handshake opened a new conversation (`session/new`), taken by the first
    *  `session/prompt`. Never set on a conversation loaded back. */
   styleOwed?: string
+  /** The replayed user message in progress as the agent kept it, its chunks
+   *  joined: the history shows it without the style it was sent with
+   *  (PRDCT-5166), which can only be read off the whole opening. */
+  replayedUserText?: string
   /** The exit code to report, when the adapter ended the session itself. */
   exitCode?: number
   /** PRDCT-4507: the tab's credential for Clave's tools was issued at this
@@ -1380,9 +1388,16 @@ export class AcpAdapter implements SessionAdapter {
     if (kind === 'user_message_chunk') {
       const chunk = blockText(update.content)
       this.closeLoadedText(state)
+      // The agent kept what was SENT: on the first-message road, the style
+      // and then the message. The views show what the person wrote
+      // (PRDCT-5166); OpenCode's chat, never sent a style, is left as it is.
+      const sent =
+        last?.type === 'user_message' ? (state.replayedUserText ?? last.text) + chunk : chunk
+      state.replayedUserText = sent
+      const shown = this.styleByFirstMessage() ? messageWithoutStyle(sent) : sent
       if (last?.type === 'user_message')
-        history[history.length - 1].event = { ...last, text: last.text + chunk }
-      else history.push({ event: { type: 'user_message', text: chunk } })
+        history[history.length - 1].event = { ...last, text: shown }
+      else history.push({ event: { type: 'user_message', text: shown } })
       return
     }
     if (kind === 'agent_message_chunk') {
