@@ -6,6 +6,7 @@ import {
   usePaneSearchStore
 } from '../../../src/renderer/src/views/pane-search'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
+import type { StatusCard } from '../../../src/shared/status-card'
 
 /**
  * Find in this conversation, for the field in the pane's header (PaneSearch,
@@ -18,7 +19,9 @@ import { parseDelivery } from '../../../src/shared/exchange-provenance'
  * the words are marked with the CSS Custom Highlight API.
  *
  * - What is searched: the messages as they read, the reader's and the
- *   agent's, and the adapter's notices, an error or a quiet one (PRDCT-4566).
+ *   agent's, the status card under an answer (PRDCT-5166: its fields, on
+ *   screen, so findable; its labels are not), and the adapter's notices, an
+ *   error or a quiet one (PRDCT-4566).
  *   Tool calls are not: their output sits behind a closed group, and a match
  *   there would point at nothing on screen.
  * - The query settles for DEBOUNCE_MS before it is searched; the field shows a
@@ -34,9 +37,24 @@ export const DEBOUNCE_MS = 200
 /** Where message text lives in both views' rows: every entry `rowTexts`
  *  reads, a notice in either of its tones. */
 export const MESSAGE_TEXT =
-  'article.chat-turn, .chat-notice[data-tone="error"], .chat-notice[data-tone="quiet"]'
+  'article.chat-turn, .status-card-field, .chat-notice[data-tone="error"], .chat-notice[data-tone="quiet"]'
 /** How long to wait for a page of the past before giving up on it. */
 const PAGE_WAIT_MS = 5000
+
+/** An answer's words, then its status card's fields in the order the card
+ *  draws them (`StatusCard`, each a `.status-card-field`), so the count and
+ *  the marks on screen agree. */
+function answerTexts(v: Record<string, unknown>): string[] {
+  const out = [v.text as string]
+  const card = v.card as StatusCard | undefined
+  if (card) {
+    if (card.doing !== null) out.push(card.doing)
+    if (card.where !== null) out.push(card.where)
+    out.push(...card.decide)
+    if (card.next !== null) out.push(card.next)
+  }
+  return out
+}
 
 /** The texts a row shows as messages, in order: every user, assistant and
  *  error entry anywhere in the row's structure, each read once. */
@@ -56,7 +74,7 @@ export function rowTexts(row: unknown): string[] {
       return
     }
     if (v.kind === 'assistant' && typeof v.text === 'string') {
-      out.push(v.text)
+      out.push(...answerTexts(v))
       return
     }
     if (v.kind === 'error' && typeof v.message === 'string') {
@@ -106,17 +124,19 @@ export function occurrenceCards(row: unknown, needle: string): (number | null)[]
       for (const key of Object.keys(v)) walk(v[key], mine, depth + 1)
       return
     }
-    const text =
+    const texts =
       v.kind === 'user' && typeof v.text === 'string' && !v.withdrawn
-        ? (parseDelivery(v.text)?.body ?? v.text)
+        ? [parseDelivery(v.text)?.body ?? v.text]
         : v.kind === 'assistant' && typeof v.text === 'string'
-          ? v.text
+          ? answerTexts(v)
           : v.kind === 'error' && typeof v.message === 'string'
-            ? v.message
+            ? [v.message]
             : null
-    if (text !== null) {
-      const n = occurrences(text.toLocaleLowerCase(), needle)
-      for (let i = 0; i < n; i++) out.push(inCard < 0 ? null : inCard)
+    if (texts !== null) {
+      for (const text of texts) {
+        const n = occurrences(text.toLocaleLowerCase(), needle)
+        for (let i = 0; i < n; i++) out.push(inCard < 0 ? null : inCard)
+      }
       return
     }
     if (v.kind === 'tool' || v.kind === 'permission') return

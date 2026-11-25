@@ -1,5 +1,6 @@
 import type { ModelOption, SessionStream } from '../../../shared/session-model'
 import { handoffBudgetChars } from './handoff-budget'
+import { readStatusCard } from '../../../shared/status-card'
 import type { ProviderChoice, ProviderSwitchPlan } from '../../../preload/index.d'
 import { isChatSession, registerProviderSwitchRoad } from './account-policy'
 import { useSessionStore, type Session } from '../store/session-store'
@@ -103,6 +104,12 @@ export function requestHandoffNote(
 ): Promise<string | null> {
   return new Promise((resolve) => {
     let text = ''
+    // Each message of the reply on lines of its own, so the status block one
+    // ends on (PRDCT-5166) opens a line and is read as the card it is.
+    let between = false
+    // The note is the reply's words: a status card it ends on is not part
+    // of what the next agent is handed as the note.
+    const note = (): string | null => readStatusCard(text).body.trim() || null
     let asked = false
     let settled = false
     const done = (value: string | null): void => {
@@ -120,17 +127,21 @@ export function requestHandoffNote(
         return
       }
       if (!asked) return
-      if (event.type === 'assistant_text' && !event.parent) text += event.delta
-      else if (
+      if (event.type === 'assistant_text' && !event.parent) {
+        if (between && event.delta) text += '\n\n'
+        between = between && !event.delta
+        text += event.delta
+        if (event.final) between = true
+      } else if (
         event.type === 'state_change' &&
         (event.state === 'idle' || event.state === 'done') &&
         text.trim()
       )
-        done(text.trim())
-      else if (event.type === 'state_change' && event.state === 'ended') done(text.trim() || null)
-      else if (event.type === 'turn_interrupted') done(text.trim() || null)
+        done(note())
+      else if (event.type === 'state_change' && event.state === 'ended') done(note())
+      else if (event.type === 'turn_interrupted') done(note())
     })
-    const timer = setTimeout(() => done(text.trim() || null), timeoutMs)
+    const timer = setTimeout(() => done(note()), timeoutMs)
     window.electronAPI
       .sessionsWrite(sessionId, { type: 'user_message', text: request })
       .catch(() => done(null))

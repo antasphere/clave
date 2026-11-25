@@ -299,6 +299,29 @@ describe('requestHandoffNote', () => {
     await expect(note).resolves.toBe('We are moving the chip.')
     expect(listener).toBeNull()
   })
+  it('hands over the words of the reply, never the status card it ended on (PRDCT-5166)', async () => {
+    let listener: ((stream: unknown) => void) | null = null
+    h.api.onSessionStream = vi.fn((_id: string, cb: (stream: unknown) => void) => {
+      listener = cb
+      return () => {
+        listener = null
+      }
+    })
+    const note = mod.requestHandoffNote('s1', 5000)
+    await Promise.resolve()
+    const emit = (event: unknown): void => listener?.({ kind: 'event', event })
+    emit({ type: 'user_message', text: mod.HANDOFF_NOTE_REQUEST })
+    emit({ type: 'assistant_text', delta: 'Reading the files.', final: false })
+    emit({ type: 'assistant_text', delta: '', final: true })
+    emit({ type: 'assistant_text', delta: 'We are moving the chip.', final: false })
+    emit({
+      type: 'assistant_text',
+      delta: '\n\n```clave-status\ndoing: the chip\nnext: nothing\n```',
+      final: true
+    })
+    emit({ type: 'state_change', state: 'idle' })
+    await expect(note).resolves.toBe('Reading the files.\n\nWe are moving the chip.')
+  })
   it('gives up with nothing when the turn yields no text in time', async () => {
     vi.useFakeTimers()
     h.api.onSessionStream = vi.fn(() => () => undefined)

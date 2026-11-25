@@ -1,6 +1,7 @@
-import type { Entry } from './reducer'
+import { hasContent, type Entry } from './reducer'
 import { describeToolHead, visibleEntries } from './tools'
 import { parseDelivery } from '../../../src/shared/exchange-provenance'
+import { statusCardLines } from '../../../src/shared/status-card'
 
 /** What the transcript's head says about the conversation it holds. */
 export interface TranscriptMeta {
@@ -138,9 +139,17 @@ export function transcriptMarkdown(
         break
       }
       case 'assistant': {
-        if (!entry.text.trim()) break
+        // The words, then the status they ended on (PRDCT-5166) as a quote of
+        // its lines: the card read back, never the block the agent wrote.
+        if (!hasContent(entry)) break
         agentTurn(entry.at)
-        block(entry.text.trim())
+        if (entry.text.trim()) block(entry.text.trim())
+        if (entry.card)
+          block(
+            statusCardLines(entry.card)
+              .map((line) => `> ${line}`)
+              .join('\n')
+          )
         break
       }
       case 'tool': {
