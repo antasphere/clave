@@ -36,6 +36,10 @@ Three rules the rest follows from:
   system prompt on a conversation's first request and replays it afterwards,
   so there a style cannot change in the middle of a conversation; a style
   edited or deleted since reaches the other harnesses at their next launch.
+  One exception: a tab moved onto a harness that cannot take a style in that
+  kind of tab (an Antigravity terminal) is given none there, its record names
+  none from then on, and moved back it starts on no style. A record names a
+  style only while its agent was given it.
 - **A style takes the place of the harness's own.** In a tab that has one,
   Claude Code's output style is reset and Codex's own `developer_instructions`
   are replaced, so two styles never argue. No style leaves both untouched.
@@ -49,7 +53,11 @@ holds that machine's settings, as the helpers' preference is
 group's picker names (this Mac, or a saved Clave server), picks the style new
 tabs start with, and offers to import the person's Claude Code output style as
 a style. The road is the Helpers page's, layer for layer (the wire's module is
-`packages/contract/src/settings/writing-styles.ts`).
+`packages/contract/src/settings/writing-styles.ts`). A document that
+no longer parses (a hand edit that left a syntax error) reads as no style of
+the machine's own; before the first write over it, its exact text is kept
+beside it as `writing-styles.damaged-<n>.json`, so one comma never costs a
+person their styles.
 
 ## How a style reaches each harness
 
@@ -75,6 +83,20 @@ agent was not given. OpenCode keeps the person's own instruction files beside
 Clave's. `scripts/replay-writing-style.ts` asks the real CLIs one question
 under a style, started with the flags a tab starts them with, and reads their
 answers with the app's own reader: run it when a harness releases a version.
+
+**A tab that cannot take a style**: an Antigravity terminal, and a terminal tab
+on Windows (the shell there cannot carry the text). The machine's default
+simply does not apply to it, in silence. A style its launch NAMES is refused
+with a sentence that says why and the way out ("Antigravity takes no writing
+style in a terminal tab: open it as a chat, or name no style."), never
+dropped: an agent that asked for a style is told it did not get one.
+
+OpenCode reads its instructions from a file: Clave writes a style's text once
+under the machine's data folder (`writing-styles/applied/`, one small file per
+distinct text, named by its hash) and names it in the tab's inline
+configuration. Codex's instructions are written as a TOML string
+(`tomlBasicString` in `src/shared/agent-launch.ts`); a value Codex cannot read
+as TOML would be taken raw, in silence.
 
 ## The agent tools
 
@@ -103,14 +125,21 @@ next: the one thing the person must do now, or "nothing"
 ```
 ````
 
-`decide` zero to three times; a `decide` or a `next` that says nothing is
-owed is read as none. A block, not a tool call: no extra model round trip on
-every turn, and it reads as text in a terminal.
+`decide` zero to three times. A `next` or a `decide` that says nothing is
+owed is read as none: the word alone (`nothing`, `none`, `n/a`, a dash) or
+with the few words a model adds ("nothing for now"). A line that opens on the
+word and goes on to ask something ("None of the migrations ran: run them by
+hand") is kept: losing a real ask is the one silent loss here. A block, not a
+tool call: no extra model round trip on every turn, and it reads as text in a
+terminal.
 
 The reader takes the agent's word and nothing else. A block is a card only
 when it **ends the message at its top level**; a block quoted inside another
 fence, followed by words, never closed, or naming no field is left in the text
-exactly as written. Nothing guesses a status from prose.
+exactly as written. A block that names a field and says nothing in it
+(`next: nothing` alone) is a card that owes nothing. Nothing guesses a status
+from prose. The card holds five decisions at most and clips a field at 600
+characters.
 
 Where the block goes:
 
