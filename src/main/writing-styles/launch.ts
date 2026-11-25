@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { LauncherFamily } from '../../shared/agent-launch'
+import { HARNESS_BY_ID } from '../../shared/harness'
 import { STYLE_SUPPORT } from '../../shared/writing-styles'
 import { lazyTerminalPorts } from '../ports/terminals'
 import { launchStyle, recordedStyle, type LaunchStyleAnswer } from './source'
@@ -26,27 +27,52 @@ export interface StyleDecisionInput {
   recorded?: string
   /** A routine's run: unattended, so it takes a style only when it names one. */
   routine: boolean
+  /** The spawn runs on Windows, where a terminal tab is given no style
+   *  (`pty-backend.ts`: `cmd.exe` cannot carry the text). */
+  windows?: boolean
 }
 
 /**
  * The style a spawn runs on, or the refusal of a style the launch names and
- * the machine does not have. `style: null` is no style, and then nothing is
- * applied and nothing is recorded:
+ * cannot have. `style: null` is no style, and then nothing is applied and
+ * nothing is recorded:
  *  - a spawn that runs none of the five harnesses (a plain terminal, the
  *    agents view);
- *  - a harness that cannot take a style in this kind of tab (`STYLE_SUPPORT`),
- *    so a record never names a style its agent was not given;
+ *  - a tab that cannot take a style (`STYLE_SUPPORT`, and a terminal on
+ *    Windows) when its launch names none: the machine's default simply does
+ *    not apply there, so a record never names a style its agent was not
+ *    given. A launch that NAMES one there is refused, never dropped in
+ *    silence: an unknown name with the list, as everywhere, a known one with
+ *    the sentence that says why;
  *  - a routine's run that names none: nobody reads an unattended run.
  * A tab launched again runs on the style its record keeps when the machine
- * still has it, never on the default and never refused: it must come back.
+ * still has it and the tab can take it, never on the default and never
+ * refused: it must come back.
  */
 export function decideLaunchStyle(input: StyleDecisionInput): LaunchStyleAnswer {
   if (input.family === null || input.agentsMode) return { ok: true, style: null }
-  if (STYLE_SUPPORT[input.family][input.chat ? 'chat' : 'terminal'] === 'none')
-    return { ok: true, style: null }
+  const refusal = cannotTakeStyle(input.family, input.chat, input.windows === true)
+  if (refusal !== null) {
+    if (input.adopting || input.named === undefined) return { ok: true, style: null }
+    const named = launchStyle(input.named)
+    if (!named.ok || named.style === null) return named
+    return { ok: false, reason: refusal }
+  }
   if (input.adopting) return { ok: true, style: recordedStyle(input.named ?? input.recorded) }
   if (input.routine && input.named === undefined) return { ok: true, style: null }
   return launchStyle(input.named)
+}
+
+/** Why a tab of this harness and kind takes no style, as the sentence a
+ *  launch that names one is refused with; null when it takes one. The way
+ *  out names the chat only when the harness's chat does take a style. */
+function cannotTakeStyle(family: LauncherFamily, chat: boolean, windows: boolean): string | null {
+  const support = STYLE_SUPPORT[family]
+  const orChat = support.chat === 'none' ? 'name no style' : 'open it as a chat, or name no style'
+  if (support[chat ? 'chat' : 'terminal'] === 'none')
+    return `${HARNESS_BY_ID[family].name} takes no writing style in ${chat ? 'a chat' : 'a terminal tab'}: ${chat ? 'name no style' : orChat}.`
+  if (!chat && windows) return `A terminal tab takes no writing style on Windows: ${orChat}.`
+  return null
 }
 
 /** Where an applied style's text is written for a harness that reads its

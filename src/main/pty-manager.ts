@@ -444,8 +444,8 @@ class PtyManager {
     const isEvents = !!events || echo
     // The writing style the tab starts with (PRDCT-5166), decided here as the
     // permission default is, for every launch alike: a refusal (a style the
-    // launch names and the machine does not have) ends the spawn before any
-    // process starts. A chat on an adapter that hands no style on (the echo
+    // launch names and the machine does not have, or one it names for a tab
+    // that cannot take one) ends the spawn before any process starts. A chat on an adapter that hands no style on (the echo
     // fixture, a plugin's) runs on none. From here on `writingStyle` is the
     // id of the style applied, or nothing, and `writingStyleText` its text:
     // a restart carries the first, each harness is given the second.
@@ -462,7 +462,8 @@ class PtyManager {
               options?.adoptSessionId && options.writingStyle === undefined
                 ? this.recordedWritingStyle(options.adoptSessionId)
                 : undefined,
-            routine: options?.link?.kind === 'routine'
+            routine: options?.link?.kind === 'routine',
+            windows: process.platform === 'win32'
           })
     if (!styleAnswer.ok) throw new Error(styleAnswer.reason)
     const style = styleAnswer.style

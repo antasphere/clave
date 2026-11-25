@@ -175,6 +175,7 @@ vi.mock('./launch-profile-manager', () => ({
 }))
 
 import { ptyManager } from './pty-manager'
+import { ptyAdapter } from './sessions/adapters/pty-adapter'
 
 const TAB = '11111111-1111-4111-8111-111111111111'
 const CONVERSATION = '33333333-3333-4333-8333-333333333333'
@@ -1087,6 +1088,26 @@ describe('a chat tab starts with its writing style, and keeps it (PRDCT-5166)', 
     await ptyManager.spawn(plan.cwd, plan.options)
     expect(configured().writingStyleText).toBeUndefined()
     expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
+  it('a style named for an Antigravity terminal refuses the spawn before anything is configured', async () => {
+    mocks.resolvedProfile = { id: 'builtin-antigravity', command: ['agy'], additionalArgs: [] }
+    try {
+      await expect(
+        ptyManager.spawn('/project', {
+          claudeMode: false,
+          antigravityMode: true,
+          writingStyle: 'quiet'
+        })
+      ).rejects.toThrow(
+        'Antigravity takes no writing style in a terminal tab: open it as a chat, or name no style.'
+      )
+    } finally {
+      mocks.resolvedProfile = null
+    }
+    expect(ptyAdapter.prepare).not.toHaveBeenCalled()
+    expect(mocks.antigravity.configure).not.toHaveBeenCalled()
+    expect(mocks.backend.writeEventSessionRecord).not.toHaveBeenCalled()
   })
 
   it('a Codex chat is handed the style as its developer instructions', async () => {
