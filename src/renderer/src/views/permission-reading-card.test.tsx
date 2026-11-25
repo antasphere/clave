@@ -379,6 +379,27 @@ describe('the card in the dock (PRDCT-4483)', () => {
       'Meta+Enter 3'
     ])
   })
+  it('scrolls what is asked and keeps the buttons out of the scroll', () => {
+    // A request written at length (a whole review report as its description)
+    // pushed Allow and Deny off the pane: the words scroll, the buttons stay.
+    const long: Permission = {
+      ...asked('a'),
+      toolName: 'Edit',
+      input: {
+        file_path: `READY ${'finding in worker/src/implement.mjs '.repeat(400)}END OF REPORT ?`
+      }
+    }
+    const html = dock([long])
+    const scroll = html.indexOf('<div class="chat-prompt-scroll">')
+    const actions = html.indexOf('<div class="chat-prompt-actions">')
+    expect(scroll).toBeGreaterThan(-1)
+    expect(html.indexOf('chat-prompt-title')).toBeGreaterThan(scroll)
+    expect(html).toContain('data-kind="permission"')
+    expect(actions).toBeGreaterThan(html.lastIndexOf('finding'))
+    const css = readFileSync(join(__dirname, '../../../../packages/ui/src/system.css'), 'utf8')
+    expect(css).toMatch(/\.chat-prompt:not\(\[data-inline='true'\]\) \{\s*max-height:/)
+    expect(css).toMatch(/\.chat-prompt-scroll \{[^}]*overflow-y: auto/)
+  })
   it('says the queue level with the question, and nothing when one request waits', () => {
     expect(dock([asked('a'), asked('b')])).toMatch(
       /<div class="chat-prompt-head"><div class="chat-prompt-title">[^<]*<\/div><span class="chat-prompt-queue">1 of 2 waiting<\/span><\/div>/
