@@ -577,6 +577,9 @@ export interface SessionRecord {
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. */
   continuedFrom?: { provider: string; road: 'converted' | 'handoff' }
+  /** The id of the writing style the tab was opened with (PRDCT-5166);
+   *  absent for a tab on no style. */
+  writingStyle?: string
   /** True → reattach to a still-running tmux session. False → the tmux server
    *  died (reboot) but the sidecar survived; re-spawn fresh (Claude resumes). */
   live?: boolean

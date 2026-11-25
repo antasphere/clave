@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BUILT_IN_STYLES, composeStyleText } from '../shared/writing-styles'
+import { setWritingStylesSource } from './writing-styles/source'
 
 // A chat tab has no PTY, so nothing wrote it a session record and it was gone
 // at the next launch. These pin the facade's half of the fix: the record is
@@ -911,5 +913,127 @@ describe('bypass kept reachable on the spawn and the record (PRDCT-4191, round 3
     expect(mocks.backend.writeEventSessionRecord).toHaveBeenLastCalledWith(
       expect.objectContaining({ dangerousMode: false })
     )
+  })
+})
+
+describe('a chat tab starts with its writing style, and keeps it (PRDCT-5166)', () => {
+  const dense = {
+    id: 'dense',
+    name: 'Dense',
+    description: 'Short.',
+    text: 'Be short.',
+    statusCard: false,
+    builtIn: false
+  }
+  const quietText = composeStyleText(BUILT_IN_STYLES.find((style) => style.id === 'quiet')!)
+  let defaultStyleId: string | null = 'dense'
+  beforeEach(() => {
+    defaultStyleId = 'dense'
+    setWritingStylesSource({
+      view: () => ({
+        styles: [...BUILT_IN_STYLES, dense],
+        defaultStyleId,
+        claudeOutputStyle: null
+      })
+    })
+  })
+  afterEach(() => setWritingStylesSource(null))
+  const configured = (): { writingStyle?: string; writingStyleText?: string } =>
+    mocks.claude.configure.mock.calls.at(-1)![1] as never
+  const recorded = (): { writingStyle?: string } =>
+    (mocks.backend.writeEventSessionRecord.mock.calls.at(-1) as unknown[])[0] as never
+
+  it("a fresh chat runs on the machine's default and its record names it", async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat' })
+    expect(configured()).toMatchObject({ writingStyle: 'dense', writingStyleText: 'Be short.' })
+    expect(recorded().writingStyle).toBe('dense')
+  })
+
+  it('a launch that names a style gets it; one that says none gets none, recorded as none', async () => {
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', writingStyle: 'Quiet' })
+    expect(configured()).toMatchObject({ writingStyle: 'quiet', writingStyleText: quietText })
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', writingStyle: 'none' })
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
+  it('a style the machine does not have refuses the spawn before any process', async () => {
+    await expect(
+      ptyManager.spawn('/project', { launchProfileId: 'claude-chat', writingStyle: 'verbose' })
+    ).rejects.toThrow(/Unknown writing style "verbose"/)
+    expect(mocks.claude.spawn).not.toHaveBeenCalled()
+    expect(mocks.backend.writeEventSessionRecord).not.toHaveBeenCalled()
+  })
+
+  it("a routine's run that names none runs on none", async () => {
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      link: { kind: 'routine', routineKey: 'r', runId: 'run' }
+    })
+    expect(configured().writingStyleText).toBeUndefined()
+  })
+
+  it("a restored tab runs on its record's style, never the default", async () => {
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB, writingStyle: 'quiet' } : null) as never)
+    await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      adoptSessionId: TAB,
+      resumeSessionId: CONVERSATION
+    })
+    expect(configured()).toMatchObject({ writingStyle: 'quiet', writingStyleText: quietText })
+    expect(recorded().writingStyle).toBe('quiet')
+    // A tab from before the styles comes back on none, whatever the default.
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === TAB ? { id: TAB } : null) as never)
+    await ptyManager.spawn('/project', { launchProfileId: 'claude-chat', adoptSessionId: TAB })
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
+  it('a restart keeps the style, read off the record before the kill takes it', async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'quiet'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id, writingStyle: 'quiet' } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'other' })!
+    expect(plan.options.writingStyle).toBe('quiet')
+    // The kill took the record, and the machine's default changed since.
+    mocks.backend.getSessionRecord.mockImplementation(() => null)
+    defaultStyleId = 'dense'
+    await ptyManager.spawn(plan.cwd, plan.options)
+    expect(configured()).toMatchObject({ writingStyle: 'quiet', writingStyleText: quietText })
+    expect(recorded()).toMatchObject({ id: session.id, writingStyle: 'quiet' })
+  })
+
+  it('a restart of a tab on no style stays on none, never taking the default', async () => {
+    const session = await ptyManager.spawn('/project', {
+      launchProfileId: 'claude-chat',
+      writingStyle: 'none'
+    })
+    mocks.backend.getSessionRecord.mockImplementation(((id: string) =>
+      id === session.id ? { id } : null) as never)
+    const plan = ptyManager.restartSpawn(session.id, { claudeProfileId: 'other' })!
+    expect(plan.options.writingStyle).toBeUndefined()
+    mocks.backend.getSessionRecord.mockImplementation(() => null)
+    await ptyManager.spawn(plan.cwd, plan.options)
+    expect(configured().writingStyleText).toBeUndefined()
+    expect(recorded()).not.toHaveProperty('writingStyle')
+  })
+
+  it('a Codex chat is handed the style as its developer instructions', async () => {
+    const codex = {
+      id: 'codex-chat',
+      provider: 'codex',
+      spawn: vi.fn(async (spec: { id: string }) => ({ id: spec.id })),
+      kill: vi.fn(async () => undefined)
+    }
+    mocks.manager.getAdapter.mockImplementation(((id: string) =>
+      id === 'codex-chat' ? codex : mocks.claude) as never)
+    await ptyManager.spawn('/project', { launchProfileId: 'codex-chat' })
+    expect(mocks.codexConfigure.mock.calls.at(-1)?.[4]).toBe('Be short.')
+    expect(recorded().writingStyle).toBe('dense')
   })
 })
