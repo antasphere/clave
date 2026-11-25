@@ -207,10 +207,15 @@ internal class SyncKv : KeyValueStore {
     @Volatile var beforeRemove: (suspend (String) -> Unit)? = null
     /** Runs before every read, with its key, and may suspend there: a test holds, cancels or refuses one read. */
     @Volatile var beforeRead: (suspend (String) -> Unit)? = null
+    /** Runs after a read, with its key and the value read, and may suspend there: the reader
+     *  holds that value while the test changes the store under it. */
+    @Volatile var afterRead: (suspend (String, String?) -> Unit)? = null
     override suspend fun get(key: String): String? {
         beforeRead?.invoke(key)
         beforeGet?.invoke(key)
-        return map[key]
+        val value = map[key]
+        afterRead?.invoke(key, value)
+        return value
     }
     override suspend fun set(key: String, value: String) {
         beforeSet?.invoke(key)

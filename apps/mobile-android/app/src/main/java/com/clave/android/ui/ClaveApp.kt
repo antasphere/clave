@@ -256,8 +256,9 @@ private fun MachinesRoute(nav: NavHostController, viewModel: ClaveViewModel) {
     val store by viewModel.store.collectAsStateWithLifecycle()
     val auth by viewModel.auth.collectAsStateWithLifecycle()
     val paired by viewModel.paired.collectAsStateWithLifecycle()
-    val relayUrl by viewModel.relayUrl.collectAsStateWithLifecycle()
-    val relayError by viewModel.relayError.collectAsStateWithLifecycle()
+    val addresses by viewModel.addresses.collectAsStateWithLifecycle()
+    val addressError by viewModel.addressError.collectAsStateWithLifecycle()
+    val adding by viewModel.addingAddress.collectAsStateWithLifecycle()
     val signingOut by viewModel.signingOut.collectAsStateWithLifecycle()
     val now = rememberNow(30_000)
     var shown by rememberSaveable { mutableStateOf(false) }
@@ -267,16 +268,25 @@ private fun MachinesRoute(nav: NavHostController, viewModel: ClaveViewModel) {
     }
     val card = Development.machinesCard
     MachinesScreen(
-        state = machinesState(store, auth, paired, relayUrl, signingOut, now, relayError),
+        state = machinesState(store, auth, paired, addresses, signingOut, now, addressError, adding),
         onSignIn = viewModel::signIn,
         onSignOut = viewModel::signOut,
-        onRelayUrlChange = viewModel::editRelayUrl,
-        onConnectRelay = viewModel::connectRelay,
+        onAddAddress = viewModel::addAddress,
+        onRenameAddress = { address, name -> viewModel.renameAddress(address.url, name) },
+        onRemoveAddress = { viewModel.removeAddress(it.url) },
         onRefresh = viewModel::loadMachines,
         onOpen = { openRoot(nav, Routes.home(it.id)) },
         onPair = { nav.navigate(Routes.pairing(it.id)) },
         onMakeMain = { viewModel.setMainMachine(it.id) },
-        onForget = if (BuildConfig.DEVELOPMENT) ({ machine -> viewModel.removeDeveloperMachine(machine.id) }) else null,
+        // A development build's server goes with its entry; any other machine stays listed and
+        // loses its pairing.
+        onForget = { machine ->
+            if (BuildConfig.DEVELOPMENT && machine.id.startsWith("dev:")) {
+                viewModel.removeDeveloperMachine(machine.id)
+            } else {
+                viewModel.forgetMachine(machine)
+            }
+        },
         onAppearance = { nav.navigate(Routes.APPEARANCE) },
         developer = card?.let { { it { nav.navigate(Routes.DEVELOPER) } } },
     )

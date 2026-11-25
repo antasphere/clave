@@ -43,7 +43,9 @@ import com.clave.core.contract.SessionStream
 import com.clave.core.contract.SpawnOptions
 import com.clave.core.contract.StartSessionInput
 import com.clave.core.contract.WorkspaceView
+import com.clave.core.devices.AddressListing
 import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineDirectory
 import com.clave.core.transport.ClavePushClient
 import com.clave.core.transport.ClaveServerClient
 import com.clave.core.transport.PushState
@@ -54,6 +56,7 @@ import com.clave.core.transport.messageOf
 import java.text.Collator
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -136,6 +139,9 @@ public data class StoreState(
     val machines: List<Machine> = emptyList(),
     val machinesLoading: Boolean = false,
     val machinesError: String? = null,
+    /** How each machine address answered the last listing, in the person's order; its
+     *  failure is said on its own row, never in [machinesError]. */
+    val addresses: List<AddressListing> = emptyList(),
     val mainMachineId: String? = null,
     val reachability: Map<String, Reachability> = emptyMap(),
     val workspaces: Map<String, List<WorkspaceView>> = emptyMap(),
@@ -302,27 +308,65 @@ public class ClaveStore(private val services: Services) {
 
     // ── machines ──
 
+    /** Which [loadMachines] is the latest: an older one still running publishes nothing more. */
+    private val machineLoads = AtomicLong(0)
+
+    /**
+     * Lists the machines of every source. The developer machines are read first; the
+     * addresses then publish their listing as each one answers, so a slow address holds back
+     * no other. Only the latest load publishes: one started before a removal or an added
+     * address never writes its older listing over a newer one.
+     */
     public suspend fun loadMachines() {
+        val load = machineLoads.incrementAndGet()
+        fun latest() = machineLoads.get() == load
         _state.update { it.copy(machinesLoading = true, machinesError = null) }
-        val found = mutableListOf<Machine>()
         val problems = mutableListOf<String>()
-        for (source in listOfNotNull(services.relaySource, services.developerSource)) {
+        val developer = mutableListOf<Machine>()
+        services.developerSource?.let { source ->
             try {
-                found += source.list()
+                developer += source.list()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 problems += fail(e)
             }
         }
+        val found = mutableListOf<Machine>()
+        var addresses = emptyList<AddressListing>()
+        services.relaySource?.let { source ->
+            try {
+                if (source is MachineDirectory) {
+                    val listing = source.listing { partial ->
+                        // Checked inside the update: a retried update of an older load sees
+                        // the newer load and leaves the state as that one left it.
+                        _state.update { if (latest()) it.copy(machines = partial.machines + developer, addresses = partial.addresses) else it }
+                    }
+                    found += listing.machines
+                    addresses = listing.addresses
+                } else {
+                    found += source.list()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                problems += fail(e)
+            }
+        }
+        found += developer
         val main = services.credentials.mainMachineId()
         _state.update {
-            it.copy(
-                machines = found.toList(),
-                machinesLoading = false,
-                machinesError = if (problems.isEmpty()) null else problems.joinToString(" "),
-                mainMachineId = main ?: found.firstOrNull()?.id,
-            )
+            if (!latest()) {
+                it
+            } else {
+                it.copy(
+                    machines = found.toList(),
+                    machinesLoading = false,
+                    machinesError = if (problems.isEmpty()) null else problems.joinToString(" "),
+                    addresses = addresses,
+                    mainMachineId = main ?: found.firstOrNull()?.id,
+                )
+            }
         }
     }
 

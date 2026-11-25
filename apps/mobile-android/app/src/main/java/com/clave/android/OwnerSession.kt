@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 import com.clave.core.transport.Credential as TransportCredential
 
 /**
- * One account's session on this phone: its namespaced stores, its owner services (relay,
+ * One account's session on this phone: its namespaced stores, its owner services (addresses,
  * pairing, push, sign-out), its store of machines and conversations, and its notification
  * inbox. Everything here is the account's alone: [close] disconnects every machine, stops the
  * inbox and cancels the session's work, and the next account gets a session of its own. A

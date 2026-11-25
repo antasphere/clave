@@ -17,6 +17,7 @@ import com.clave.core.contract.LaunchProfilePreferencesView
 import com.clave.core.contract.LaunchProfileView
 import com.clave.core.contract.RequestKind
 import com.clave.core.contract.SessionAttachment
+import com.clave.core.devices.MachineAddress
 import com.clave.core.notifications.DeepLink
 import com.clave.core.notifications.InitialRoute
 import com.clave.core.state.ConversationState
@@ -25,6 +26,7 @@ import com.clave.core.state.chatProfilesOf
 import com.clave.core.state.conversationKey
 import com.clave.core.state.orderProfiles
 import com.clave.ui.screens.AccountState
+import com.clave.ui.screens.AddressRow
 import com.clave.ui.screens.ChatComposerState
 import com.clave.ui.screens.ChatScreenState
 import com.clave.ui.screens.LaunchScreenState
@@ -62,46 +64,65 @@ data class ChatSessionState(
     val filesRoute: Boolean = true,
 )
 
-/** The sentence a refused relay address shows on the Machines screen: the core's own words. */
-fun relayErrorOf(error: Throwable): String = error.message?.takeIf { it.isNotEmpty() } ?: "The relay address could not be saved."
+/** The sentence a refused or failed address change shows on the Machines screen: the core's own words. */
+fun addressErrorOf(error: Throwable): String = error.message?.takeIf { it.isNotEmpty() } ?: "The address could not be saved."
+
+/** What a paired machine's row says when no address lists it any more. */
+const val PAIRED_NOT_LISTED: String = "Paired, not listed by any address"
 
 /**
  * The Machines screen: the account as the sign-in says it (its last failure by its wire
- * word), the team relay's address as typed, and every machine with whether this phone holds
- * a credential for it, whether it is the main one, and the reachability the phone measured;
- * null until the phone has tried, so the relay's online flag stands in. [relayError], a
- * refused relay address, wins over the store's own error.
+ * word); one row per address in the person's order, joined on its url with how the last
+ * listing answered (an address not read yet has no error and no machine); and every machine
+ * with whether this phone holds a credential for it, whether it is the main one, the
+ * reachability the phone measured (null until the phone has tried, so the address's online
+ * flag stands in) and the label of the address that lists it. [addressError] is the
+ * sentence of an address change that was refused; the store's error is only its own, since
+ * every address says its failure on its row.
  */
 fun machinesState(
     store: StoreState,
     auth: AuthStatus,
     paired: Set<String>,
-    relayUrl: String,
+    addresses: List<MachineAddress>,
     signingOut: Boolean,
     now: Long,
-    relayError: String? = null,
-): MachinesScreenState = MachinesScreenState(
-    account = AccountState(
-        signedIn = auth.account != null,
-        name = auth.account?.name,
-        email = auth.account?.email,
-        signingIn = auth.phase == AuthPhase.SigningIn,
-        signingOut = signingOut,
-        relayUrl = relayUrl,
-        lastFailure = auth.lastFailure?.wire,
-    ),
-    machines = store.machines.map { m ->
-        MachineRow(
-            machine = m,
-            paired = m.id in paired,
-            main = m.id == store.mainMachineId,
-            reachability = store.reachability[m.id]?.toReachability(),
-        )
-    },
-    loading = store.machinesLoading,
-    error = relayError ?: store.machinesError,
-    now = now,
-)
+    addressError: String? = null,
+    adding: Boolean = false,
+): MachinesScreenState {
+    val listings = store.addresses.associateBy { it.address.url }
+    return MachinesScreenState(
+        account = AccountState(
+            signedIn = auth.account != null,
+            name = auth.account?.name,
+            email = auth.account?.email,
+            signingIn = auth.phase == AuthPhase.SigningIn,
+            signingOut = signingOut,
+            lastFailure = auth.lastFailure?.wire,
+        ),
+        machines = store.machines.map { m ->
+            val listedBy = m.address?.let { url ->
+                (addresses.firstOrNull { it.url == url } ?: listings[url]?.address ?: MachineAddress(url)).label
+            } ?: PAIRED_NOT_LISTED.takeIf { m.id in paired && !m.id.startsWith("dev:") }
+            MachineRow(
+                machine = m,
+                paired = m.id in paired,
+                main = m.id == store.mainMachineId,
+                reachability = store.reachability[m.id]?.toReachability(),
+                listedBy = listedBy,
+            )
+        },
+        loading = store.machinesLoading,
+        error = store.machinesError,
+        now = now,
+        addresses = addresses.map { a ->
+            val listing = listings[a.url]
+            AddressRow(a, listing?.machineIds?.size ?: 0, listing?.error, listing?.fromCache ?: false, listing?.pending ?: false)
+        },
+        addressError = addressError,
+        adding = adding,
+    )
+}
 
 /** The pending requests of a machine, as its last snapshot listed them; none before one. */
 internal fun pendingOf(store: StoreState, machineId: String) = store.requests[machineId]?.snapshot?.pending.orEmpty()

@@ -197,10 +197,13 @@ class FixtureFlowTest {
             signInThroughTheBrowser()
         }
 
-        // 3. The team relay, and the fixture's machine listed through it.
+        // 3. The relay as one of the phone's addresses (an earlier run may have added it), and
+        //    the fixture's machine listed through it.
         rule.waitUntil(STEP_MS) { rule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
-        rule.onAllNodes(hasSetTextAction()).onFirst().performScrollTo().performTextReplacement(fixture.relay)
-        rule.onNodeWithText("Connect to team relay").performScrollTo().performClick()
+        if (!shown(fixture.relay)) {
+            rule.onNodeWithContentDescription("Machine address").performScrollTo().performTextReplacement(fixture.relay)
+            rule.onNodeWithText("Add address").performScrollTo().performClick()
+        }
         waitForText(fixture.machine, timeoutMs = CROSSING_MS)
 
         // 4. The machine paired (the runner approves), or opened when an earlier run paired it.

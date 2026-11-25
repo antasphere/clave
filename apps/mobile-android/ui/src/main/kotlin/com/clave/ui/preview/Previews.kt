@@ -35,8 +35,10 @@ import com.clave.core.contract.SessionEvent
 import com.clave.core.contract.Transport
 import com.clave.core.contract.WorkspaceView
 import com.clave.core.devices.Machine
+import com.clave.core.devices.MachineAddress
 import com.clave.core.devices.PairingState
 import com.clave.ui.screens.AccountState
+import com.clave.ui.screens.AddressRow
 import com.clave.ui.screens.AppearanceScreen
 import com.clave.ui.screens.ChatComposerState
 import com.clave.ui.screens.ChatScreen
@@ -167,18 +169,26 @@ private fun MachinesScreenPreview(@PreviewParameter(ThemeNameProvider::class) th
                     email = "ada@example.com",
                     signingIn = false,
                     signingOut = false,
-                    relayUrl = "https://relay.example",
                     lastFailure = null,
                 ),
                 machines = listOf(
-                    MachineRow(studio, paired = true, main = true, reachability = Reachability.Reachable),
+                    MachineRow(studio, paired = true, main = true, reachability = Reachability.Reachable, listedBy = "Team relay"),
                     MachineRow(buildBox, paired = false, main = false, reachability = null),
                 ),
                 loading = false,
                 error = null,
                 now = PREVIEW_NOW,
+                addresses = listOf(
+                    AddressRow(MachineAddress("https://relay.example", "Team relay"), machineCount = 1, error = null, fromCache = false),
+                    AddressRow(
+                        MachineAddress("https://home-mac.example"),
+                        machineCount = 0,
+                        error = "The address could not be reached.",
+                        fromCache = false,
+                    ),
+                ),
             ),
-            onSignIn = {}, onSignOut = {}, onRelayUrlChange = {}, onConnectRelay = {}, onRefresh = {},
+            onSignIn = {}, onSignOut = {}, onAddAddress = { _, _, _ -> }, onRenameAddress = { _, _ -> }, onRemoveAddress = {}, onRefresh = {},
             onOpen = {}, onPair = {}, onMakeMain = {}, onForget = {}, onAppearance = {},
         )
     }

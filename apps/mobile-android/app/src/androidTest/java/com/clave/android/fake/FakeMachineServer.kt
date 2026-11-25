@@ -34,7 +34,15 @@ import org.json.JSONObject
  * tell, [pushDown] refuses the push upgrade with a 503 and [dropPush] closes the open sockets
  * as a restarting server does.
  */
-class FakeMachineServer(private val token: String) : Closeable {
+class FakeMachineServer(
+    private val token: String,
+    /** Set, the stand-in is also an address of the phone's list, the way a server's own road
+     *  is: `GET /machines` with [hubToken] lists this one machine, and every route above is
+     *  served under `/m/<machineId>` too. */
+    private val machineId: String? = null,
+    private val hubToken: String? = null,
+    private val machineName: String = "Stand-in machine",
+) : Closeable {
     /** One HTTP request as the stand-in received it. */
     data class Recorded(
         val method: String,
@@ -48,6 +56,9 @@ class FakeMachineServer(private val token: String) : Closeable {
 
     /** Every HTTP request, in the order of arrival. */
     val requests = CopyOnWriteArrayList<Recorded>()
+
+    /** Every HTTP path as it arrived, before the `/m/<machineId>` road is taken off. */
+    val roads = CopyOnWriteArrayList<String>()
 
     /** The paths no route of the stand-in knows, as `METHOD /path`. */
     val unknownPaths = CopyOnWriteArrayList<String>()
@@ -151,8 +162,19 @@ class FakeMachineServer(private val token: String) : Closeable {
 
     private fun answer(request: RecordedRequest): MockResponse {
         val url = request.requestUrl
-        val path = url?.encodedPath ?: request.path.orEmpty().substringBefore('?')
+        val raw = url?.encodedPath ?: request.path.orEmpty().substringBefore('?')
+        val prefix = machineId?.let { "/m/$it" }
+        val path = if (prefix != null && raw.startsWith("$prefix/")) raw.removePrefix(prefix) else raw
         val method = request.method.orEmpty()
+        if (machineId != null && method == "GET" && raw == "/machines") {
+            val authorization = request.getHeader("Authorization")
+            requests += Recorded(method, raw, url?.encodedQuery, "", authorization)
+            if (authorization != "Bearer $hubToken") return json(401, """{"message":"The hub token is not the stand-in's."}""")
+            return json(
+                200,
+                """{"machines":[{"id":${JSONObject.quote(machineId)},"name":${JSONObject.quote(machineName)},"platform":"macos","version":"0.0.0-stand-in","online":true,"lastSeen":null,"direct":[]}]}""",
+            )
+        }
         if (method == "GET" && path == PUSH_PATH) {
             if (pushDown) return json(503, """{"message":"The stand-in's push is down on purpose."}""")
             return MockResponse().withWebSocketUpgrade(PushSocket())
@@ -160,6 +182,7 @@ class FakeMachineServer(private val token: String) : Closeable {
         val body = request.body.readUtf8()
         val authorization = request.getHeader("Authorization")
         requests += Recorded(method, path, url?.encodedQuery, body, authorization)
+        roads += raw
         val route = "$method $path"
         if (route !in ROUTES) {
             unknownPaths += route
