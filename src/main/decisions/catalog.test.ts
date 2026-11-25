@@ -23,5 +23,6 @@ describe('the catalog', () => {
         .map((d) => d.id)
         .sort()
     )
+    expect(named).toEqual(expect.arrayContaining(['tab-project']))
   })
 })

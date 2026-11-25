@@ -61,6 +61,12 @@ describe('the decisions preference', () => {
     const list = preferences.list()
     expect(list.map((d) => d.id)).toEqual(listDecisions().map((d) => d.id))
     expect(list).toContainEqual({
+      id: 'tab-project',
+      label: 'Tab project',
+      description: expect.stringContaining('first and latest messages'),
+      enabled: true
+    })
+    expect(list).toContainEqual({
       id: 'atlas-fits',
       label: 'Atlas fits',
       description: 'An invented decision.',

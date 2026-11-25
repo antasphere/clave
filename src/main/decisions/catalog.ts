@@ -6,5 +6,4 @@
  * more line here. Pure: the declarations send nothing, so the standalone
  * server's settings graph can load it.
  */
-// The first decision lands in its own change.
-export {}
+export { tabProjectDecision } from './tab-project'
