@@ -370,9 +370,26 @@ async function login(world, call) {
   return answer({ site, email })
 }
 
-/** A site the command may push to: one of the machine's, signed in. */
-function signedIn(world, site) {
+/** The site the link file of the folder pushed names (in the folder, or beside a file), or null. */
+function linkedSite(target) {
+  const folder = statSync(target).isDirectory() ? target : path.dirname(target)
+  const file = path.join(folder, '.slideless.json')
+  if (!existsSync(file)) return null
+  try {
+    const { baseUrl } = JSON.parse(readFileSync(file, 'utf8'))
+    return typeof baseUrl === 'string' ? normalOrigin(baseUrl) : null
+  } catch {
+    return null
+  }
+}
+
+/** A site the command may push to: one of the machine's, signed in. Or, as the real command
+ *  takes it, the site the folder's own link file names when `--api-url` names that very site,
+ *  with no profile there: the command makes one in memory and signs in through that site's hub
+ *  (its guard against a folder linked elsewhere only runs when no site is named). */
+function signedIn(world, site, call, target) {
   const profile = profileAt(world, site)
+  if (!profile && call.apiUrl && linkedSite(target) === site) return null
   if (!profile) return `${site} is not a site of this machine.`
   if (!['signed_in', 'will_sign_in'].includes(profile.signIn.state))
     return `Not signed in to ${site}: run slideless login.`
@@ -383,7 +400,7 @@ function push(world, call) {
   const site = siteOf(world, call)
   const target = operand(call.rest, ['--title', '--id', '--entry', '--kind'])
   if (!target || !existsSync(target)) return fail(world, site, `No such file or folder: ${target}`)
-  const refused = signedIn(world, site)
+  const refused = signedIn(world, site, call, target)
   if (refused) return fail(world, site, refused)
   const title = option(call.rest, '--title') ?? path.basename(target)
   const id = option(call.rest, '--id')

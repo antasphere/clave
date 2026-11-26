@@ -15,7 +15,9 @@
  *
  * Which deck a share goes to: a new one when the person asks (`newDeck`, on
  * the site named); else the deck recorded, on its own site (a deck stays on
- * its site); else the deck a folder's link file names, made outside Clave;
+ * its site); else the deck a folder's link file names, made outside Clave,
+ * when its site is one of the machine's (Clave never signs in at a site only
+ * a link file names: that share is refused before anything reaches a site);
  * else a new deck on the site named. A push to a deck the site no longer has
  * answers `deck_gone` and records nothing: a new deck is the person's call.
  *
@@ -61,6 +63,9 @@ export const CHOOSE_SITE = "Choose the site for this artefact's first link."
 export const CHOOSE_SITE_FOR_NEW_DECK = "Choose the site for this artefact's new deck."
 export const deckStays = (site: string): string =>
   `This artefact's deck is on ${site}; a deck stays on its own site.`
+/** A folder whose link file names a site the machine does not list: Clave never signs in there. */
+export const linkedElsewhere = (site: string): string =>
+  `This folder is linked to a deck on ${site}, which is not one of this machine's Slideless sites: add it with « Add a site » in Settings › Slideless first.`
 
 export interface ShareDeps {
   readonly dataDir: string
@@ -175,12 +180,16 @@ export function createArtefactShare(deps: ShareDeps): ArtefactShare {
     artefact: Artefact,
     request: ShareRequest
   ): Promise<ArtefactShareResult> => {
-    const named = request.site?.trim() ? normalOrigin(request.site) : null
-    if (named !== null) {
-      const accounts = await deps.listed()
-      if (!accounts.profiles.some((profile) => normalOrigin(profile.site.origin) === named))
-        throw new ArtefactRefusal(`${named} is not one of this machine's Slideless sites.`)
+    // The machine's sites, listed once: a site named, and the site a folder's
+    // link file names, must be one of them before anything reaches a site.
+    let listing: SlidelessAccounts | null = null
+    const machineSite = async (origin: string): Promise<boolean> => {
+      listing ??= await deps.listed()
+      return listing.profiles.some((profile) => normalOrigin(profile.site.origin) === origin)
     }
+    const named = request.site?.trim() ? normalOrigin(request.site) : null
+    if (named !== null && !(await machineSite(named)))
+      throw new ArtefactRefusal(`${named} is not one of this machine's Slideless sites.`)
     const record = deps.decks.get(artefact.target)
     // Which deck, and on which site.
     let site: string
@@ -197,6 +206,10 @@ export function createArtefactShare(deps: ShareDeps): ArtefactShare {
     } else {
       linked = isFile(artefact) ? null : await linkedFolderOf(artefact.target)
       if (linked) {
+        // A site only a link file names is never reached: with its own
+        // `--api-url` the command would sign in at whatever hub it names.
+        if (!(await machineSite(linked.site)))
+          throw new ArtefactRefusal(linkedElsewhere(linked.site))
         if (named !== null && named !== linked.site)
           throw new ArtefactRefusal(deckStays(linked.site))
         site = linked.site

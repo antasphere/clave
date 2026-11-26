@@ -15,8 +15,10 @@
 // same deck whatever « New links go to » says; two pages of one folder get
 // two decks, pushed from two copies the server stages; a password and a
 // pinned version reach the link; a link is revoked by its token; a deck gone
-// from its site is made anew on the site chosen. Last, a dead loopback site is
-// removed. Every site, address and key is invented.
+// from its site is made anew on the site chosen. A dead loopback site is
+// removed. Last, a folder whose link file names a site of no profile here is
+// refused before anything is pushed: Clave never signs in at a site only a
+// link file names. Every site, address and key is invented.
 import { createHash } from 'node:crypto'
 import {
   chmodSync,
@@ -50,6 +52,8 @@ const DECKS = 'https://decks.example.test'
 const CLOUD = 'https://cloud.example.test'
 const LOCAL = 'http://127.0.0.1:3400'
 const DEAD = 'http://127.0.0.1:3999'
+/** A site no profile of the machine is: only a folder's link file names it. */
+const ELSEWHERE = 'https://elsewhere.example.test'
 const HUB = 'https://hub.example.test'
 const EMAIL = 'someone@example.test'
 const CODE = '271828'
@@ -178,7 +182,11 @@ function world() {
     codes: { [LOCAL]: CODE },
     refusedKeys: [sha256(REFUSED_KEY)],
     keyEmail: EMAIL,
-    decks: {},
+    // The deck a folder's link file names on a site of no profile here: a push
+    // that named that site would land on it, as the real command's would.
+    decks: {
+      'deck-elsewhere': { site: ELSEWHERE, title: 'linked', version: 1, tokens: [], gone: false }
+    },
     nextDeck: 1,
     nextToken: 1,
     // Long enough to read the page before its check answers.
@@ -252,11 +260,17 @@ export async function run(t) {
   const PAGES = `${ROOT}/clave-e2e-pages`
   const ONE = `${PAGES}/one.html`
   const TWO = `${PAGES}/two.html`
+  const LINKED = `${ROOT}/clave-e2e-linked`
   for (const folder of [ROOT, STUB_DIR]) rmSync(folder, { recursive: true, force: true })
-  for (const folder of [DECK, PAGES, STUB_DIR]) mkdirSync(folder, { recursive: true })
+  for (const folder of [DECK, PAGES, LINKED, STUB_DIR]) mkdirSync(folder, { recursive: true })
   writeFileSync(`${DECK}/index.html`, '<!doctype html><h1 id="t">first draft</h1>')
   writeFileSync(ONE, '<!doctype html><h1>one</h1>')
   writeFileSync(TWO, '<!doctype html><h1>two</h1>')
+  writeFileSync(`${LINKED}/index.html`, '<!doctype html><h1>linked elsewhere</h1>')
+  writeFileSync(
+    `${LINKED}/.slideless.json`,
+    `${JSON.stringify({ presentationId: 'deck-elsewhere', baseUrl: ELSEWHERE }, null, 2)}\n`
+  )
   writeFileSync(STATE, JSON.stringify(world(), null, 2))
   const readWorld = () => JSON.parse(readFileSync(STATE, 'utf8'))
   const writeWorld = (next) => writeFileSync(STATE, JSON.stringify(next, null, 2))
@@ -926,6 +940,27 @@ export async function run(t) {
       removes.length === 1 && has(removes[0], 'dead') && optionOf(removes[0], '--api-url') === DEAD,
       removes.map((call) => call.argv)
     )
+
+    // ── 12. A folder whose link file names a site of no profile here ──
+    await toSessions()
+    t.check(
+      '12. the agent opens a folder whose link file names a site the machine does not list',
+      !toolErrored(await client.call('clave_open_artefact', { path: LINKED }))
+    )
+    await openDialog('clave-e2e-linked')
+    const beforeLinked = mark()
+    const linked = await submit()
+    t.equal(
+      '12. Create link refuses it: Clave never signs in at a site only a link file names',
+      linked?.refusal,
+      `This folder is linked to a deck on ${ELSEWHERE}, which is not one of this machine's Slideless sites: add it with « Add a site » in Settings › Slideless first.`
+    )
+    t.check(
+      '12. nothing was pushed: the journal holds no push',
+      journal(beforeLinked).every((call) => !has(call, 'push')),
+      journal(beforeLinked).map((call) => call.argv)
+    )
+    await closeDialog()
 
     // Nothing of a secret in the journal's arguments, ever.
     const everything = JSON.stringify(journal().map((call) => call.argv))

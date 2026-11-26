@@ -10,6 +10,7 @@ import {
   createArtefactShare,
   deckStays,
   FOREIGN_LINK,
+  linkedElsewhere,
   stagedPath,
   type ArtefactShare
 } from './artefact-share'
@@ -380,6 +381,46 @@ describe('making a link', () => {
       'd9'
     ])
     expect(await s.share.deck('s1', s.folder)).toMatchObject({ deckId: 'd9', linkedFolder: null })
+  })
+
+  it('refuses a folder whose link file names a site the machine does not list: only open and the listing run', async () => {
+    const elsewhere = 'https://elsewhere.example.test'
+    const s = setup({
+      override: (args, child) => {
+        if (!args.includes('open')) return false
+        answer(
+          JSON.stringify({
+            presentationId: 'd9',
+            baseUrl: `${elsewhere}/`,
+            url: `${elsewhere}/d/d9`
+          })
+        )(child)
+        return true
+      }
+    })
+    expect(linkedElsewhere(elsewhere)).toBe(
+      "This folder is linked to a deck on https://elsewhere.example.test, which is not one of this machine's Slideless sites: add it with « Add a site » in Settings › Slideless first."
+    )
+    expect(
+      await refusal(s.share.share({ sessionId: 's1', target: s.folder, link: defaults }))
+    ).toBe(`ArtefactRefusal: ${linkedElsewhere(elsewhere)}`)
+    // The local read of the link file, then the machine's listing: nothing reached a site.
+    expect(s.slideless.argv()).toEqual([
+      ['--json', 'open', s.folder],
+      ['--json', 'profiles']
+    ])
+    // A site of the machine named beside it changes nothing: the listing is read once.
+    const before = s.slideless.calls.length
+    expect(
+      await refusal(
+        s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
+      )
+    ).toBe(`ArtefactRefusal: ${linkedElsewhere(elsewhere)}`)
+    expect(s.slideless.argv().slice(before)).toEqual([
+      ['--json', 'profiles'],
+      ['--json', 'open', s.folder]
+    ])
+    expect(await s.share.deck('s1', s.folder)).toMatchObject({ deckId: null, links: [] })
   })
 
   it('answers deck_gone for a deck the site no longer has, makes no link and records nothing', async () => {
