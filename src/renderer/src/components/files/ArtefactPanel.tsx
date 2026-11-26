@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   ArrowTopRightOnSquareIcon,
   BookmarkSquareIcon,
@@ -5,6 +6,7 @@ import {
   CodeBracketIcon,
   DocumentTextIcon,
   FolderIcon,
+  LinkIcon,
   PresentationChartBarIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
@@ -16,6 +18,7 @@ import { ownerOfSession, useArtefactStore } from '../../store/artefact-store'
 import { SlidelessArtefact } from './SlidelessArtefact'
 import { ArtefactVersionChip } from './ArtefactVersionChip'
 import { ArtefactPicker } from './ArtefactPicker'
+import { CreateLinkDialog } from './CreateLinkDialog'
 import { FileMenu } from './FileMenu'
 import { inBrowser, shownFor } from '../../lib/artefact-version'
 import { useFleetStore } from '../../store/fleet-store'
@@ -32,6 +35,10 @@ import { presentArtefact } from '../../lib/artefact-presenter'
  * a file tab of the machine the session runs on, and the file's place. Hiding
  * the panel keeps the artefact on its server; the chip in the session's
  * header brings it back.
+ *
+ * « Create link » (PRDCT-4266), in the bar before the menu and first in it,
+ * pushes the artefact to its deck on a Slideless site and makes a link to it
+ * (`CreateLinkDialog`), for the artefact shown when it was asked.
  */
 export function ArtefactPanel({
   sessionId,
@@ -50,6 +57,8 @@ export function ArtefactPanel({
   const previewUrl = useArtefactStore((s) => s.previewUrl[sessionId])
   const shown = useArtefactStore((s) => shownFor(s.version[sessionId], artefact.openedAt))
   const machine = useFleetStore((s) => (own ? 'this Mac' : serverNameOf(s.connections, owner)))
+  /** The artefact « Create link » was asked for, while its dialog is open. */
+  const [linking, setLinking] = useState<Artefact | null>(null)
   return (
     <section className="linked-document-panel" data-testid="artefact-panel">
       {/* The session bar's classes: one control tall beside the session's own bar (PRDCT-4491). */}
@@ -67,9 +76,27 @@ export function ArtefactPanel({
           )}
         </div>
         <div className="pane-header-actions">
+          <IconButton
+            className="panel-icon-btn"
+            tooltip="Create link"
+            aria-label="Create link"
+            disabled={!ready}
+            onClick={() => setLinking(artefact)}
+            data-create-link-open
+          >
+            <LinkIcon className="w-4 h-4" />
+          </IconButton>
           <FileMenu
             label="Artefact menu"
             actions={[
+              {
+                // PRDCT-4266: pushed to its deck on a Slideless site, and a link made to it.
+                id: 'create-link',
+                label: 'Create link…',
+                icon: LinkIcon,
+                disabled: !ready,
+                onSelect: () => setLinking(artefact)
+              },
               {
                 // PRDCT-4980: the deck alone in a window of its own.
                 id: 'present',
@@ -167,6 +194,15 @@ export function ArtefactPanel({
       <div className="linked-document-content">
         <SlidelessArtefact sessionId={sessionId} artefact={artefact} />
       </div>
+      {linking && (
+        <CreateLinkDialog
+          sessionId={sessionId}
+          artefact={linking}
+          owner={owner}
+          machineName={own ? null : machine}
+          onClose={() => setLinking(null)}
+        />
+      )}
     </section>
   )
 }
