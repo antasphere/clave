@@ -8,6 +8,7 @@ import {
   type PublishInput,
   SlidelessPublisher,
   VERSIONS_TIMEOUT_MS,
+  newLinksSiteGone,
   notInstalled,
   onSeveralSites,
   parseJsonOutput,
@@ -221,7 +222,8 @@ describe('what the CLI answers', () => {
 describe('SlidelessPublisher.publish', () => {
   it('creates the deck on the site chosen for new links and mints its one link there, the first time', async () => {
     const h = publisher([pushed('deck-1', 1), shared('https://s.example/1')], {
-      newLinksSite: CLOUD
+      newLinksSite: CLOUD,
+      sites: [DECKS, CLOUD]
     })
     const outcome = await h.publisher.publish(h.input(null))
     expect(h.calls.map((c) => c.args)).toEqual([
@@ -239,8 +241,21 @@ describe('SlidelessPublisher.publish', () => {
       },
       shareError: null
     })
-    // No site was looked for, and nothing written before the push.
-    expect(h.asked.sites).toBe(0)
+    // The saved sites read once, to check the setting; no deck looked for by its id, nothing written before the push.
+    expect(h.asked.sites).toBe(1)
+    expect(h.calls.some((c) => c.args[3] === 'versions')).toBe(false)
+    expect(h.saved).toEqual([])
+  })
+
+  it('refuses a first deck when « New links go to » names a site the machine no longer has, and runs nothing', async () => {
+    const h = publisher([], { newLinksSite: `${CLOUD}/`, sites: [DECKS] })
+    const failure = await failureOf(h.publisher.publish(h.input(null)))
+    expect(failure.message).toBe(newLinksSiteGone(CLOUD))
+    expect(failure.message).toBe(
+      "« New links go to » names https://cloud.example.test, which is no longer one of this machine's Slideless sites: choose one in Settings › Slideless."
+    )
+    expect(h.calls).toEqual([])
+    expect(h.asked).toEqual({ newLinksSite: 1, sites: 1 })
     expect(h.saved).toEqual([])
   })
 
@@ -512,9 +527,14 @@ describe('a deck kept before records named their site: one look by its id (PRDCT
     expect(h.saved).toEqual([])
   })
 
-  it('takes a deck for gone on a machine with no saved site, and says so when no site is chosen for new links', async () => {
-    const none = publisher([pushed('new-1', 1), shared('https://s.example/new')], { sites: [] })
-    expect((await none.publisher.publish(none.input(kept))).state.site).toBe(DECKS)
+  it('takes a deck for gone on a machine with no saved site, makes none where « New links go to » names a site no longer there, and says so when none is chosen', async () => {
+    // No saved site knows it: gone. The setting names a site the machine no longer has: no new deck.
+    const none = publisher([], { sites: [], newLinksSite: DECKS })
+    const gone = await failureOf(none.publisher.publish(none.input(kept)))
+    expect(gone.message).toBe(newLinksSiteGone(DECKS))
+    expect(none.calls).toEqual([])
+    expect(none.asked.sites).toBe(1)
+    expect(none.saved).toEqual([])
     const unchosen = publisher([refused('Error: not_found')], {
       sites: [CLOUD],
       newLinksSite: null

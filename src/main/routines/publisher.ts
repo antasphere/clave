@@ -7,8 +7,10 @@
  * first (`--api-url <site> --json …`): the site the routine's record names; for
  * a deck kept before records named a site, the one site of the machine that
  * knows the deck by its id, written into the record before the push; for a new
- * deck, the machine's « New links go to ». A deck stays on its site: one the
- * site no longer has is replaced on the same site. The first push creates the
+ * deck, the machine's « New links go to », checked against the machine's saved
+ * sites first (one it no longer has fails the publish, as no setting does). A
+ * deck stays on its site: one the site no longer has is replaced on the same
+ * site. The first push creates the
  * deck and the service keeps its id and its site; the first push also mints ONE
  * named share link for the routine (follow-latest, forms, downloads and
  * uploads off), whose URL is a bearer: it lives in the server's own
@@ -93,6 +95,9 @@ export const notInstalled = (what: 'pushed' | 'shared'): string =>
 /** The sentence of a new deck with no site to go to. */
 export const NO_SITE_CHOSEN =
   'no site is chosen for new links on this server (Settings › Slideless), so the deck was not pushed'
+/** The sentence of a new deck whose « New links go to » is no longer a saved site of the machine. */
+export const newLinksSiteGone = (site: string): string =>
+  `« New links go to » names ${site}, which is no longer one of this machine's Slideless sites: choose one in Settings › Slideless.`
 /** The sentence of a kept deck a site could not be asked about. */
 export const notLookedFor = (deckId: string, origin: string, result: ExecResult): string =>
   `the routine's deck ${deckId} could not be looked for on ${origin} (${runFailure(result)}), so the deck was not pushed`
@@ -172,21 +177,30 @@ export class SlidelessPublisher implements RoutinePublisher {
     return new PublishFailure(`the deck was not ${what}: ${runFailure(result)}`)
   }
 
-  /** Where a new deck goes: the machine's « New links go to », or the failure that none is chosen. */
-  private async newDeckSite(): Promise<string> {
-    const site = await this.options.newLinksSite()
-    if (site === null || site.trim() === '') throw new PublishFailure(NO_SITE_CHOSEN)
-    return normalOrigin(site)
+  /** Where a new deck goes: the machine's « New links go to » while it is one
+   *  of the machine's saved sites, else the failure that says why not (none
+   *  chosen, or one the machine no longer has). `saved` is the saved sites
+   *  when they were just read; they are read otherwise. */
+  private async newDeckSite(saved?: readonly string[]): Promise<string> {
+    const chosen = await this.options.newLinksSite()
+    if (chosen === null || chosen.trim() === '') throw new PublishFailure(NO_SITE_CHOSEN)
+    const site = normalOrigin(chosen)
+    const sites = (saved ?? (await this.options.sites())).map(normalOrigin)
+    if (!sites.includes(site)) throw new PublishFailure(newLinksSiteGone(site))
+    return site
   }
 
   /** The sites of the machine that know a deck by its id: every saved site
    *  asked, in order, each once. Only the site's own « not found » counts as
    *  absent: any other failure (a site down, a sign-in refused) stops the
    *  publish, so a deck is never taken for gone on an answer that did not say so. */
-  private async sitesOf(deckId: string, folder: string): Promise<string[]> {
-    const origins = [...new Set((await this.options.sites()).map(normalOrigin))]
+  private async sitesOf(
+    deckId: string,
+    folder: string
+  ): Promise<{ found: string[]; saved: string[] }> {
+    const saved = [...new Set((await this.options.sites()).map(normalOrigin))]
     const found: string[] = []
-    for (const origin of origins) {
+    for (const origin of saved) {
       const looked = await this.run(
         versionsArgs(origin, deckId),
         folder,
@@ -196,7 +210,7 @@ export class SlidelessPublisher implements RoutinePublisher {
       if (looked.code === 0) found.push(origin)
       else if (!isGone(looked)) throw new PublishFailure(notLookedFor(deckId, origin, looked))
     }
-    return found
+    return { found, saved }
   }
 
   async publish(input: PublishInput): Promise<PublishOutcome> {
@@ -208,14 +222,14 @@ export class SlidelessPublisher implements RoutinePublisher {
       site = normalOrigin(kept.site)
     } else if (kept) {
       // A deck kept before records named their site: the one site that knows it.
-      const found = await this.sitesOf(kept.deckId, input.folder)
+      const { found, saved } = await this.sitesOf(kept.deckId, input.folder)
       if (found.length > 1) throw new PublishFailure(onSeveralSites(kept.deckId, found))
       if (found.length === 1) {
         site = found[0]!
         input.save({ ...kept, site })
       } else {
         // On none of them: gone, as a push refused under its id would say.
-        site = await this.newDeckSite()
+        site = await this.newDeckSite(saved)
         this.log(
           'warn',
           `publish: the routine's deck ${kept.deckId} is on none of this server's sites; making a new deck on ${site}`
