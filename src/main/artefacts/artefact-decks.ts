@@ -19,11 +19,16 @@
  * offered as a deck and never dropped. Every write carries it over as the JSON
  * value it was read, outside the bound, and the view, the share and the
  * revocation of its target are refused with the sentence; every other target
- * works. The file is owner-only, written through a rename (`fileDecksStorage`),
- * since a link's URL is a bearer. Bounded: at most `MAX_DECKS` decks, the one
- * pushed longest ago going first (never the one being written), and
- * `MAX_LINKS_PER_DECK` links per deck, its oldest going first. A deck pushed
- * anew keeps its links; a new deck starts with none.
+ * works. And for one link: a link this version cannot read, in a deck entry it
+ * can, is carried over every write of that entry as the JSON value it was
+ * read, after the links it can read; it is never offered (not in the view's
+ * links, never revoked nor counted by Clave) and never pushed out by the bound
+ * of a deck's links. The file is owner-only, written through a rename
+ * (`fileDecksStorage`), since a link's URL is a bearer. Bounded: at most
+ * `MAX_DECKS` decks, the one pushed longest ago going first (never the one
+ * being written), and `MAX_LINKS_PER_DECK` links per deck, its oldest going
+ * first. A deck pushed anew keeps its links; a new deck starts with none, the
+ * links its entry held that this version cannot read included.
  */
 import { readFileSync } from 'node:fs'
 import type { ArtefactShareLink } from '@clave/contract/artefacts'
@@ -117,8 +122,10 @@ const copyLink = (link: ArtefactShareLink): ArtefactShareLink => ({
   hasPassword: link.hasPassword
 })
 
-/** A record read from the document, its fields checked and its links bounded; null when it is none. */
-const recordOf = (value: unknown): DeckRecord | null => {
+/** A deck entry read from the document: its record (the fields checked, the
+ *  links it can read bounded), and the links it cannot read, as the JSON
+ *  values they were read; null when the entry is no deck this version reads. */
+const entryOf = (value: unknown): { record: DeckRecord; unread: unknown[] } | null => {
   if (typeof value !== 'object' || value === null) return null
   const deck = value as Record<string, unknown>
   if (
@@ -130,24 +137,27 @@ const recordOf = (value: unknown): DeckRecord | null => {
     typeof deck.pushedAt !== 'string'
   )
     return null
+  const links: unknown[] = Array.isArray(deck.links) ? deck.links : []
   return {
-    site: normalOrigin(deck.site),
-    deckId: deck.deckId,
-    title: deck.title,
-    version: deck.version,
-    pushedAt: deck.pushedAt,
-    links: (Array.isArray(deck.links) ? deck.links : [])
-      .filter(isLink)
-      .map(copyLink)
-      .slice(-MAX_LINKS_PER_DECK)
+    record: {
+      site: normalOrigin(deck.site),
+      deckId: deck.deckId,
+      title: deck.title,
+      version: deck.version,
+      pushedAt: deck.pushedAt,
+      links: links.filter(isLink).map(copyLink).slice(-MAX_LINKS_PER_DECK)
+    },
+    unread: links.filter((link) => !isLink(link))
   }
 }
 
-/** The record as this version reads it: its decks, and each entry it cannot
- *  read, kept as the JSON value it was read. */
+/** The record as this version reads it: its decks, each entry it cannot read
+ *  (kept as the JSON value it was read), and, by target, the links a deck it
+ *  reads holds that it cannot (kept the same way). */
 interface RecordRead {
   readonly decks: Record<string, DeckRecord>
   readonly kept: Record<string, unknown>
+  readonly unread: Record<string, unknown[]>
 }
 
 const owns = (object: object, key: string): boolean =>
@@ -167,9 +177,10 @@ export class ArtefactDecks {
     return this.read().decks
   }
 
-  /** Records a push: the same deck on the same site keeps its links, another starts with none. */
+  /** Records a push: the same deck on the same site keeps its links, another
+   *  starts with none (the links of the old one this version cannot read included). */
   pushed(target: string, push: DeckPush): DeckRecord {
-    const { decks, kept } = this.readFor(target)
+    const { decks, kept, unread } = this.readFor(target)
     const before = decks[target]
     const site = normalOrigin(push.site)
     const same = before !== undefined && before.site === site && before.deckId === push.deckId
@@ -181,32 +192,33 @@ export class ArtefactDecks {
       pushedAt: push.pushedAt,
       links: same ? before.links : []
     }
+    if (!same) delete unread[target]
     decks[target] = record
-    this.write(decks, kept, target)
+    this.write(decks, kept, unread, target)
     return record
   }
 
   /** Adds a link Clave made to the artefact's deck; over the bound, its oldest goes
    *  (the share refuses a link past it first: the bound only protects the file). */
   addLink(target: string, link: ArtefactShareLink): DeckRecord | undefined {
-    const { decks, kept } = this.readFor(target)
+    const { decks, kept, unread } = this.readFor(target)
     const before = decks[target]
     if (!before) return undefined
     const links = [...before.links.filter((l) => l.tokenId !== link.tokenId), copyLink(link)]
     const record = { ...before, links: links.slice(-MAX_LINKS_PER_DECK) }
     decks[target] = record
-    this.write(decks, kept, target)
+    this.write(decks, kept, unread, target)
     return record
   }
 
   /** Lets go of one of the deck's links, once it is revoked. */
   removeLink(target: string, tokenId: string): DeckRecord | undefined {
-    const { decks, kept } = this.readFor(target)
+    const { decks, kept, unread } = this.readFor(target)
     const before = decks[target]
     if (!before) return undefined
     const record = { ...before, links: before.links.filter((l) => l.tokenId !== tokenId) }
     decks[target] = record
-    this.write(decks, kept, target)
+    this.write(decks, kept, unread, target)
     return record
   }
 
@@ -226,7 +238,7 @@ export class ArtefactDecks {
     let parsed: unknown
     try {
       const text = this.storage.read()
-      if (text === null) return { decks: {}, kept: {} }
+      if (text === null) return { decks: {}, kept: {}, unread: {} }
       parsed = JSON.parse(text)
     } catch (error) {
       throw this.unreadable(reasonOf(error))
@@ -243,12 +255,16 @@ export class ArtefactDecks {
       throw this.unreadable('it is not a version 1 record')
     const decks: Record<string, DeckRecord> = {}
     const kept: Record<string, unknown> = {}
+    const unread: Record<string, unknown[]> = {}
     for (const [target, value] of Object.entries(document.decks as Record<string, unknown>)) {
-      const record = recordOf(value)
-      if (record) decks[target] = record
-      else kept[target] = value
+      const entry = entryOf(value)
+      if (!entry) kept[target] = value
+      else {
+        decks[target] = entry.record
+        if (entry.unread.length > 0) unread[target] = entry.unread
+      }
     }
-    return { decks, kept }
+    return { decks, kept, unread }
   }
 
   private unreadable(reason: string): ArtefactRefusal {
@@ -256,11 +272,14 @@ export class ArtefactDecks {
   }
 
   /** Writes the document: the decks, the ones pushed longest ago going over the
-   *  bound (`keep` never), then every entry this version cannot read, as the
-   *  value it was read, never counted in the bound and never evicted by it. */
+   *  bound (`keep` never), each with the links it holds that this version cannot
+   *  read after the ones it can (outside the bound of a deck's links), then
+   *  every entry this version cannot read, as the value it was read, never
+   *  counted in the bound and never evicted by it. */
   private write(
     decks: Record<string, DeckRecord>,
     kept: Record<string, unknown>,
+    unread: Record<string, unknown[]>,
     keep: string
   ): void {
     const excess = Object.keys(decks).length - MAX_DECKS
@@ -271,6 +290,12 @@ export class ArtefactDecks {
         .slice(0, excess)
       for (const target of oldest) delete decks[target]
     }
-    this.storage.write(`${JSON.stringify({ v: 1, decks: { ...decks, ...kept } }, null, 2)}\n`)
+    const written: Record<string, unknown> = {}
+    for (const [target, record] of Object.entries(decks)) {
+      const theirs = owns(unread, target) ? unread[target]! : []
+      written[target] =
+        theirs.length > 0 ? { ...record, links: [...record.links, ...theirs] } : record
+    }
+    this.storage.write(`${JSON.stringify({ v: 1, decks: { ...written, ...kept } }, null, 2)}\n`)
   }
 }

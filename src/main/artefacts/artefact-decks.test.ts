@@ -58,6 +58,15 @@ const link = (n: number): ArtefactShareLink => ({
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })))
 
+/** A record file of its own folder, holding these decks as a version 1 document. */
+const fileHolding = (decks: Record<string, unknown>): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'clave-artefact-decks-'))
+  dirs.push(dir)
+  const file = join(dir, 'artefact-decks.json')
+  writeFileSync(file, `${JSON.stringify({ v: 1, decks }, null, 2)}\n`, { mode: 0o600 })
+  return file
+}
+
 describe('the decks record', () => {
   it('records a push, keeps the links of the same deck and starts a new deck with none', () => {
     const storage = memory()
@@ -136,7 +145,7 @@ describe('the decks record', () => {
     )
   })
 
-  it('offers no deck for an entry that is none, drops what is no link, and reads a deck’s last fifty links', () => {
+  it('offers no deck for an entry that is none, no link for what is none, and reads a deck’s last fifty links', () => {
     const many = Array.from({ length: MAX_LINKS_PER_DECK + 5 }, (_, i) => link(i + 1))
     const storage = memory(
       JSON.stringify({
@@ -289,13 +298,6 @@ describe('an entry this version cannot read', () => {
     pushedAt: '2026-11-20T10:00:00.000Z',
     links: [{ ...link(1), tokenId: 'ta' }]
   }
-  const fileHolding = (decks: Record<string, unknown>): string => {
-    const dir = mkdtempSync(join(tmpdir(), 'clave-artefact-decks-'))
-    dirs.push(dir)
-    const file = join(dir, 'artefact-decks.json')
-    writeFileSync(file, `${JSON.stringify({ v: 1, decks }, null, 2)}\n`, { mode: 0o600 })
-    return file
-  }
   const refusalOf = (call: () => unknown): string => {
     try {
       call()
@@ -358,5 +360,57 @@ describe('an entry this version cannot read', () => {
     expect(written.decks['/work/a']).toEqual(later)
     expect(written.decks['/work/deck-1']).toBeUndefined()
     expect(Object.keys(decks.all())).toHaveLength(MAX_DECKS)
+  })
+})
+
+/**
+ * One link this version cannot read, in a deck entry it can (PRDCT-4266):
+ * carried over every write of that entry as the value it was read, never
+ * offered, never pushed out by the bound of a deck's links; a new deck on its
+ * target starts with none, as it always has.
+ */
+describe('a link this version cannot read', () => {
+  /** A link as a later release might write it: its `createdAt` a number. */
+  const later = { ...link(9), tokenId: 'tz', createdAt: 1764151200000 }
+  const linksIn = (file: string, target: string): unknown[] =>
+    (JSON.parse(readFileSync(file, 'utf8')) as { decks: Record<string, { links: unknown[] }> })
+      .decks[target]!.links
+  /** The file's link with this token, as the JSON it is written. */
+  const written = (file: string, target: string, tokenId: string): string | undefined => {
+    const found = linksIn(file, target).find(
+      (value) => (value as { tokenId?: unknown }).tokenId === tokenId
+    )
+    return found === undefined ? undefined : JSON.stringify(found)
+  }
+
+  it('is carried over the writes of its deck as it was read, and the view lists only the links it can read', () => {
+    const file = fileHolding({ '/work/a': { ...push(1), links: [link(1), later] } })
+    const decks = new ArtefactDecks(fileDecksStorage(file))
+    expect(decks.get('/work/a')!.links).toEqual([link(1)])
+    decks.addLink('/work/a', link(2))
+    expect(written(file, '/work/a', 'tz')).toBe(JSON.stringify(later))
+    expect(decks.get('/work/a')!.links).toEqual([link(1), link(2)])
+    decks.removeLink('/work/a', 't1')
+    expect(written(file, '/work/a', 'tz')).toBe(JSON.stringify(later))
+    expect(decks.get('/work/a')!.links).toEqual([link(2)])
+    // The same deck pushed again keeps it as well.
+    decks.pushed('/work/a', push(1, { version: 2 }))
+    expect(written(file, '/work/a', 'tz')).toBe(JSON.stringify(later))
+    expect(decks.get('/work/a')!.links).toEqual([link(2)])
+  })
+
+  it('is never pushed out by the bound of fifty links, and goes with its deck when a new deck is made', () => {
+    const readable = Array.from({ length: MAX_LINKS_PER_DECK }, (_, i) => link(i + 1))
+    const file = fileHolding({ '/work/a': { ...push(1), links: [later, ...readable] } })
+    const decks = new ArtefactDecks(fileDecksStorage(file))
+    decks.addLink('/work/a', link(MAX_LINKS_PER_DECK + 1))
+    // The oldest link it reads goes; the one it cannot read stays, outside the bound.
+    expect(decks.get('/work/a')!.links).toHaveLength(MAX_LINKS_PER_DECK)
+    expect(decks.get('/work/a')!.links[0]).toEqual(link(2))
+    expect(written(file, '/work/a', 'tz')).toBe(JSON.stringify(later))
+    expect(linksIn(file, '/work/a')).toHaveLength(MAX_LINKS_PER_DECK + 1)
+    // A new deck on the target (« Make a new deck ») starts with none.
+    decks.pushed('/work/a', push(2))
+    expect(linksIn(file, '/work/a')).toEqual([])
   })
 })
