@@ -1,11 +1,31 @@
 /**
  * What a decision sends is data the person wrote or the agent touched, and it
  * leaves the machine for TypeSafe (PRDCT-5179). Before it does, it is clipped
- * and scrubbed: paths made relative to the workspace (an absolute path
- * carries the person's name), e-mail addresses, the rest of a link past its
- * host, and anything shaped like a token taken out. The patterns are the
- * measurement kit's, ported, in its order: paths, JWT, e-mail, link, token.
- * Pure: no process, no file.
+ * and scrubbed, by these rules, in this order:
+ *
+ * 1. an absolute path inside the workspace becomes relative to it (`.` for
+ *    the root itself): the workspace's own folders are what a project is
+ *    recognised by;
+ * 2. a `file://` link takes the same rules on its path: inside the workspace
+ *    the relative path alone, outside it `<path>`;
+ * 3. any other absolute path becomes `<path>`. The home folder is outside
+ *    the workspace, so nothing of it leaves either (a `~/…` path is read from
+ *    it, by rules 1 and 3). On POSIX, a path is a `/` at a boundary (the
+ *    start, a space, a quote, a bracket, `=`, `:`, `,`, `;`, `|`, `&`)
+ *    followed by at least two components (`/a/b`), so a slash command
+ *    (`/clear`, `/exos:lane clave 42`), a fraction, a date (`11/25/2026`),
+ *    « and/or » and a link's own path are never taken; on Windows, `X:\` or
+ *    `X:/` followed by a component;
+ * 4. a link keeps its scheme and its host (and port) and loses its user, its
+ *    password and everything after the host (`http://localhost:8080/…`); a
+ *    link with nothing after its host is left as it is;
+ * 5. JWTs, e-mail addresses and token-like runs are taken out, with the
+ *    measurement kit's patterns.
+ *
+ * The links are found together with the paths, so a path inside a link is
+ * the link's. A limit: a path is cut at a space, so a folder with a space in
+ * its name (`/Volumes/Ada Backup/notes.md`) becomes `<path>` up to the space,
+ * and what follows it (` Backup/notes.md`) stays. Pure: no process, no file.
  */
 
 /** Whitespace collapsed to single spaces, cut at `limit` characters with a
@@ -20,66 +40,113 @@ export function clip(text: string, limit: number): string {
 export interface ScrubContext {
   /** The workspace's root: a path inside it becomes relative to it. */
   workspaceRoot: string
-  /** The person's home folder: a path inside it starts with `~`. */
+  /** The person's home folder: where a `~/…` path starts. A path in it is
+   *  outside the workspace like any other. */
   home: string
 }
 
+/** What a path outside the workspace becomes. */
+export const PATH_MARK = '<path>'
+
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** Where an absolute path may start: not inside a word, a link or another
- *  path (`https://host/w/…` is a link, never the workspace's `/w`). */
-const PATH_START = String.raw`(?<![\w:/.~-])`
-/** The rest of a path: up to a space, a quote, a bracket. */
-const PATH_REST = String.raw`(?:/[^\s"'<>()\[\]{}\`]*)?`
-/** What may follow a folder's own name: its end, a separator, a space. */
-const PATH_END = String.raw`(?=$|[/\s"'<>()\[\]{}\`,;:!?.])`
+/** One component of a path: up to a separator, a space, a quote, a bracket,
+ *  or a `:` that starts another path (`/opt/a/bin:/opt/b/bin`). */
+const PART = String.raw`(?:[^/\s"'\`()\[\]{}<>:]|:(?!/))+`
+const WINDOWS_PART = String.raw`(?:[^\\/\s"'\`()\[\]{}<>:]|:(?![\\/]))+`
+/** Where a path outside the workspace may start (rule 3). */
+const BOUNDARY = String.raw`(?<=^|[\s"'\`()\[\]{}<>=:,;|&])`
+/** Where the workspace's root may start (rule 1): anywhere but inside a
+ *  word or another path. */
+const ROOT_START = String.raw`(?<![\w/.~-])`
+/** What may follow the root's own name: its end, a separator, a space. */
+const ROOT_END = String.raw`(?=$|[/\s"'<>()\[\]{}\`,;:!?.])`
 
-/** Punctuation that closes a sentence rather than a path. */
+/** A link: a scheme, `://`, and the rest up to a space, a quote or a closing
+ *  bracket (rules 2 and 4). */
+const LINK = String.raw`(?<![A-Za-z0-9+.-])(?<scheme>[A-Za-z][A-Za-z0-9+.-]*):\/\/(?<link>[^\s"'<>)\`]*)`
+const WINDOWS = String.raw`${BOUNDARY}(?<windows>[A-Za-z]:[\\/]+${WINDOWS_PART}(?:[\\/]+${WINDOWS_PART})*[\\/]*)`
+const TILDE = String.raw`${BOUNDARY}~(?<tilde>(?:/+${PART})+/*)`
+const POSIX = String.raw`${BOUNDARY}(?<posix>/${PART}(?:/+${PART})+/*)`
+
+export const JWT_PATTERN = /eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g
+export const EMAIL_PATTERN = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g
+export const TOKEN_PATTERN =
+  /(?<![\w/.-])(?:sk|pk|ghp|gho|xox[abp]|AKIA|AIza)[\w-]{10,}|(?<![\w/-])[A-Za-z0-9_-]{28,}(?![\w/-])/g
+
+/** Punctuation that closes a sentence rather than a path or a link. */
 function splitTrailing(rest: string): [string, string] {
   const match = /[.,;:!?]+$/.exec(rest)
   return match ? [rest.slice(0, match.index), match[0]] : [rest, '']
 }
 
-function prefixPattern(prefix: string): RegExp {
-  const trimmed = prefix.replace(/\/+$/, '')
-  return new RegExp(`${PATH_START}${escapeRegExp(trimmed)}${PATH_END}(${PATH_REST})`, 'g')
+function decoded(path: string): string {
+  try {
+    return decodeURIComponent(path)
+  } catch {
+    return path
+  }
 }
 
-const HOME_PATTERN = new RegExp(
-  `${PATH_START}/(?:Users|home)/[^/\\s"'<>()\\[\\]{}\`]+${PATH_END}(${PATH_REST})`,
-  'g'
-)
+/** A link scrubbed (rules 2 and 4); `inside` answers a path's form relative
+ *  to the workspace, or null when the path is outside it. */
+function scrubLink(scheme: string, body: string, inside: (path: string) => string | null): string {
+  const [link, trailing] = splitTrailing(body)
+  const cut = link.search(/[/?#]/)
+  const authority = cut === -1 ? link : link.slice(0, cut)
+  const rest = cut === -1 ? '' : link.slice(cut)
+  // The user and the password go, whatever the scheme.
+  const host = authority.slice(authority.lastIndexOf('@') + 1)
+  if (scheme.toLowerCase() === 'file') {
+    const path = rest.replace(/[?#].*$/, '')
+    if (!path) return `${scheme}://${host}${trailing}`
+    // Another machine's file is outside the workspace by definition.
+    if (host !== '' && host.toLowerCase() !== 'localhost') return `${PATH_MARK}${trailing}`
+    return `${inside(decoded(path)) ?? PATH_MARK}${trailing}`
+  }
+  return `${scheme}://${host}${rest === '' || rest === '/' ? rest : '/…'}${trailing}`
+}
 
-export const JWT_PATTERN = /eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g
-export const EMAIL_PATTERN = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g
-export const URL_PATTERN = /(https?:\/\/[^/\s"'<>)]+)[^\s"'<>)]*/g
-export const TOKEN_PATTERN =
-  /(?<![\w/.-])(?:sk|pk|ghp|gho|xox[abp]|AKIA|AIza)[\w-]{10,}|(?<![\w/-])[A-Za-z0-9_-]{28,}(?![\w/-])/g
-
-/** Absolute paths only: inside the workspace relative to it (`.` for the
- *  root itself), else inside a home `~/…`. Pure. */
+/** Rules 1 to 4, the paths and the links, found together so that a path
+ *  inside a link is the link's. Pure. */
 export function scrubPaths(text: string, context: ScrubContext): string {
-  let out = text
-  const root = context.workspaceRoot.replace(/\/+$/, '')
-  if (root.startsWith('/') && root.length > 1) {
-    out = out.replace(prefixPattern(root), (_whole, rest: string) => {
-      const [path, trailing] = splitTrailing(rest)
-      const relative = path.replace(/^\/+/, '')
-      return `${relative || '.'}${trailing}`
-    })
-  }
+  const trimmed = context.workspaceRoot.replace(/\/+$/, '')
+  const root = trimmed.startsWith('/') && trimmed.length > 1 ? trimmed : null
   const home = context.home.replace(/\/+$/, '')
-  if (home.startsWith('/') && home.length > 1) {
-    out = out.replace(prefixPattern(home), (_whole, rest: string) => `~${rest}`)
+  const inside = (absolute: string): string | null => {
+    if (!root || (absolute !== root && !absolute.startsWith(`${root}/`))) return null
+    return absolute.slice(root.length).replace(/^\/+/, '') || '.'
   }
-  return out.replace(HOME_PATTERN, (_whole, rest: string) => `~${rest}`)
+  const workspace = root
+    ? String.raw`${ROOT_START}(?<root>${escapeRegExp(root)})${ROOT_END}(?<rest>(?:/+${PART})*/*)`
+    : null
+  const pattern = new RegExp(
+    [LINK, ...(workspace ? [workspace] : []), WINDOWS, TILDE, POSIX].join('|'),
+    'g'
+  )
+  return text.replace(pattern, (whole: string, ...args: unknown[]) => {
+    const groups = args[args.length - 1] as Record<string, string | undefined>
+    if (groups.scheme !== undefined) return scrubLink(groups.scheme, groups.link ?? '', inside)
+    if (groups.root !== undefined) {
+      const [rest, trailing] = splitTrailing(groups.rest ?? '')
+      return `${rest.replace(/^\/+/, '') || '.'}${trailing}`
+    }
+    if (groups.tilde !== undefined) {
+      const [rest, trailing] = splitTrailing(groups.tilde)
+      const resolved = home.startsWith('/') ? inside(`${home}${rest}`) : null
+      return `${resolved ?? PATH_MARK}${trailing}`
+    }
+    const outside = groups.windows ?? groups.posix
+    if (outside !== undefined) return `${PATH_MARK}${splitTrailing(outside)[1]}`
+    return whole
+  })
 }
 
-/** Every rule, in the kit's order: paths, JWT, e-mail, link, token. Pure. */
+/** Every rule, in order: the paths and the links, then JWT, e-mail, token.
+ *  Pure. */
 export function scrubText(text: string, context: ScrubContext): string {
   return scrubPaths(text, context)
     .replace(JWT_PATTERN, '<token>')
     .replace(EMAIL_PATTERN, '<email>')
-    .replace(URL_PATTERN, (_whole, origin: string) => `${origin}/…`)
     .replace(TOKEN_PATTERN, '<token>')
 }

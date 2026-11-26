@@ -70,7 +70,7 @@ describe('the tab-project request', () => {
           {
             first_message:
               'Fix the toolbar in labs/products/quill/quill-web/src/bar.tsx, see https://quill.example/…',
-            latest_messages: ['Now the tests.', 'Open ~/Desktop/shot.png'],
+            latest_messages: ['Now the tests.', 'Open <path>'],
             folders_its_tools_touched: {
               'labs/products/quill/quill-web': 5,
               [ELSEWHERE]: 3,

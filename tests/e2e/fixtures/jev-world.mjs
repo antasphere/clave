@@ -45,10 +45,10 @@ export const PROJECTS = [
   }
 ]
 
-/** A Quill tab's first message as it must leave the machine: relative, the
- *  home folder as `~` (`SAY.quill`). */
+/** A Quill tab's first message as it must leave the machine: the workspace's
+ *  path relative, the path in a home folder dropped (`SAY.quill`). */
 export const sentFirst = (n) =>
-  `Quill ${n}: the ink parser in quill/src/ink.ts drops the heading after a table. My notes are in ~/notes/quill.md, read them first.`
+  `Quill ${n}: the ink parser in quill/src/ink.ts drops the heading after a table. My notes are in <path>, read them first.`
 
 /** The paths, the workspace and the tabs' words of one fixture, under the
  *  run's namespace (`name` keeps two users of it apart). */
@@ -68,8 +68,9 @@ export function jevWorld(name) {
   const P = (rel) => path.join(ROOT, rel)
 
   /** What each kind of tab said and touched. A Quill tab names an absolute
-   *  path of the workspace and a home folder in its FIRST message, which the
-   *  app must make relative before anything leaves. */
+   *  path of the workspace and one in a home folder in its FIRST message:
+   *  the app makes the first relative and drops the second before anything
+   *  leaves. */
   const SAY = {
     quill: (n) => ({
       first: `Quill ${n}: the ink parser in ${P('quill/src/ink.ts')} drops the heading after a table. My notes are in /Users/ada/notes/quill.md, read them first.`,

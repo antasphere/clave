@@ -43,11 +43,14 @@ knows a decision the catalog does not name, or when a module reaches Electron.
 ## The rules every decision keeps
 
 - **What it reads is data, clipped and scrubbed.** Everything a person said or an agent
-  touched goes through `scrubText` (paths made relative, the home taken off any other,
-  e-mail addresses, links past their host, JWTs and token-like runs taken out) and `clip`
-  before it is put in the `state` or a criterion. It leaves the machine for TypeSafe.
-- **Paths relative to the workspace.** An absolute path carries the person's name; the
-  workspace's own folders are what a project is recognised by.
+  touched goes through `scrubText` (a path inside the workspace made relative, any other
+  `<path>`, a `file://` link the same, a link cut after its host with its user and
+  password gone, e-mail addresses, JWTs and token-like runs taken out: the rules and
+  their limit are in `scrub.ts`) and `clip` before it is put in the `state` or a
+  criterion. It leaves the machine for TypeSafe.
+- **Paths relative to the workspace, the others dropped.** An absolute path carries the
+  person's name; the workspace's own folders are what a project is recognised by, and
+  a path outside the workspace, the home folder's included, never leaves the machine.
 - **Floors in one pure function of the contract package.** How an answer becomes a
   decision (the shares that decide, the companion yes-or-no that says nothing fits) is a
   measured rule, `packages/contract/src/tab-projects-rules.ts` for the first decision, so
