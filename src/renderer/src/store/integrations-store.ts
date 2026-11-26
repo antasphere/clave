@@ -6,6 +6,11 @@
  * (`fleetIntegrations` and the `fleetElevenLabs*` members, which keep this
  * Mac's on its own route), and what is kept is that machine's last answer.
  * The key a person pastes passes through once and is kept nowhere here.
+ *
+ * The Jev key (PRDCT-5179) is kept beside the ElevenLabs one: every answer
+ * of the machine carries both statuses, so acting on one card never loses
+ * the other. A machine whose answer has no `jev` runs a server released
+ * before it: that is said as the update it needs, never as an error.
  */
 import { create } from 'zustand'
 import {
@@ -14,8 +19,14 @@ import {
   INTEGRATIONS_NEED_UPDATE,
   type ElevenLabsModelId,
   type ElevenLabsStatus,
-  type ElevenLabsVoice
+  type ElevenLabsVoice,
+  type IntegrationsStatus
 } from '../../../shared/elevenlabs'
+import { JEV_REFUSED_PREFIX, type JevStatus } from '../../../shared/jev'
+
+/** What a machine whose server was released before the Jev key says on the
+ *  Jev card: nothing failed, the server only needs an update. */
+export const JEV_NEEDS_UPDATE = 'This server needs an update to hold a Jev key.'
 
 export interface MachineVoices {
   status: 'idle' | 'loading' | 'ready' | 'error'
@@ -28,6 +39,14 @@ export interface MachineIntegrations {
   /** One safe sentence, never the raw error. */
   error: string | null
   elevenLabs: ElevenLabsStatus | null
+  /** The Jev key's status; null before the first answer, and on a machine
+   *  whose server holds no Jev key (`jevOutdated`). */
+  jev: JevStatus | null
+  /** The machine answered without a Jev status: its server needs an update. */
+  jevOutdated: boolean
+  /** The last Jev write's failure, said under the Jev card alone: one safe
+   *  sentence, never the raw error. */
+  jevError: string | null
   /** A write in flight (save, check, remove): the buttons wait for it. */
   busy: boolean
   voices: MachineVoices
@@ -38,6 +57,9 @@ export const EMPTY_MACHINE_INTEGRATIONS: MachineIntegrations = {
   status: 'idle',
   error: null,
   elevenLabs: null,
+  jev: null,
+  jevOutdated: false,
+  jevError: null,
   busy: false,
   voices: EMPTY_MACHINE_VOICES
 }
@@ -61,7 +83,7 @@ function patchMachine(
 /** The sentences a machine says that are meant for the person; anything
  *  else (a socket error, a stack) is said with the fallback. */
 const SENTENCES =
-  /^(ElevenLabs refused the key: .{1,500}|Paste the API key first\.|This machine cannot store a secret\.|No ElevenLabs key on this machine\.|The key was refused by ElevenLabs\.|The server could not reach ElevenLabs\.|ElevenLabs answered \d{3}\.|That is not a voice\.|That is not an ElevenLabs model\.|This server has no integrations\.|The server did not answer)$/
+  /^(ElevenLabs refused the key: .{1,500}|TypeSafe refused the key: .{1,500}|No Jev key on this machine\.|The key was refused by TypeSafe\.|The server could not reach TypeSafe\.|This server holds no Jev key\.|The key stored on this machine could not be opened\.|Paste the API key first\.|This machine cannot store a secret\.|No ElevenLabs key on this machine\.|The key was refused by ElevenLabs\.|The server could not reach ElevenLabs\.|ElevenLabs answered \d{3}\.|That is not a voice\.|That is not an ElevenLabs model\.|This server has no integrations\.|The server did not answer)$/
 
 export function sentenceOf(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : ''
@@ -69,7 +91,8 @@ export function sentenceOf(error: unknown, fallback: string): string {
   // IPC wraps a refusal ("Error invoking remote method '…': Error: <sentence>").
   // A refusal in ElevenLabs' own words is read from where it starts: its
   // reason may itself say "Error: ".
-  const refusedAt = message.indexOf(ELEVENLABS_REFUSED_PREFIX)
+  const elevenLabsAt = message.indexOf(ELEVENLABS_REFUSED_PREFIX)
+  const refusedAt = elevenLabsAt >= 0 ? elevenLabsAt : message.indexOf(JEV_REFUSED_PREFIX)
   const sentence = (
     refusedAt >= 0 ? message.slice(refusedAt) : (message.split(/\bError: /).pop() ?? '')
   ).trim()
@@ -80,8 +103,13 @@ export function sentenceOf(error: unknown, fallback: string): string {
 export async function loadIntegrations(machine: string): Promise<void> {
   patchMachine(machine, (current) => ({ ...current, status: 'loading', error: null }))
   try {
-    const { elevenLabs } = await window.electronAPI.fleetIntegrations(machine)
-    patchMachine(machine, (current) => ({ ...current, status: 'ready', error: null, elevenLabs }))
+    const answer = await window.electronAPI.fleetIntegrations(machine)
+    patchMachine(machine, (current) => ({
+      ...current,
+      status: 'ready',
+      error: null,
+      ...statusesOf(answer)
+    }))
   } catch (error) {
     patchMachine(machine, (current) => ({
       ...current,
@@ -91,30 +119,40 @@ export async function loadIntegrations(machine: string): Promise<void> {
   }
 }
 
-/** One write on that machine; the status on screen is its answer. */
+/** Both cards' statuses out of one answer: an answer with no `jev` comes
+ *  from a server released before the Jev key. */
+function statusesOf(
+  answer: IntegrationsStatus
+): Pick<MachineIntegrations, 'elevenLabs' | 'jev' | 'jevOutdated'> {
+  return { elevenLabs: answer.elevenLabs, jev: answer.jev ?? null, jevOutdated: !answer.jev }
+}
+
+/** One write on that machine; the statuses on screen are its answer. A
+ *  failure is said under the card that wrote (`field`). */
 async function write(
   machine: string,
-  run: () => Promise<{ elevenLabs: ElevenLabsStatus }>,
+  run: () => Promise<IntegrationsStatus>,
   fallback: string,
-  after?: (current: MachineIntegrations, next: ElevenLabsStatus) => Partial<MachineIntegrations>
+  after?: (current: MachineIntegrations, next: ElevenLabsStatus) => Partial<MachineIntegrations>,
+  field: 'error' | 'jevError' = 'error'
 ): Promise<boolean> {
-  patchMachine(machine, (current) => ({ ...current, busy: true, error: null }))
+  patchMachine(machine, (current) => ({ ...current, busy: true, [field]: null }))
   try {
-    const { elevenLabs } = await run()
+    const answer = await run()
     patchMachine(machine, (current) => ({
       ...current,
       status: 'ready',
-      error: null,
+      [field]: null,
       busy: false,
-      elevenLabs,
-      ...after?.(current, elevenLabs)
+      ...statusesOf(answer),
+      ...after?.(current, answer.elevenLabs)
     }))
     return true
   } catch (error) {
     patchMachine(machine, (current) => ({
       ...current,
       busy: false,
-      error: sentenceOf(error, fallback)
+      [field]: sentenceOf(error, fallback)
     }))
     return false
   }
@@ -159,6 +197,52 @@ export function setElevenLabsVoice(
     () => window.electronAPI.fleetElevenLabsSetVoice(machine, voiceId, voiceName, modelId),
     'The voice did not reach the machine.'
   )
+}
+
+/** Seal a pasted Jev key on that machine; it is checked there at once
+ *  against TypeSafe's list of models. A failed check keeps the key and says
+ *  why in its `lastError`. */
+export function setJevKey(machine: string, apiKey: string): Promise<boolean> {
+  return jevWrite(
+    machine,
+    () => window.electronAPI.fleetJevSetKey(machine, apiKey),
+    'The key did not reach the machine.'
+  )
+}
+
+export function checkJev(machine: string): Promise<boolean> {
+  return jevWrite(
+    machine,
+    () => window.electronAPI.fleetJevCheck(machine),
+    'The check did not reach the machine.'
+  )
+}
+
+export function removeJevKey(machine: string): Promise<boolean> {
+  return jevWrite(
+    machine,
+    () => window.electronAPI.fleetJevRemove(machine),
+    'The key could not be removed from the machine.'
+  )
+}
+
+/** A Jev write: the shared write, with a server released before the Jev
+ *  key said as the update it needs (its refusal is the integrations' 404). */
+async function jevWrite(
+  machine: string,
+  run: () => Promise<IntegrationsStatus>,
+  fallback: string
+): Promise<boolean> {
+  const done = await write(machine, run, fallback, undefined, 'jevError')
+  const said = useIntegrationsStore.getState().byMachine[machine]?.jevError
+  if (!done && said === INTEGRATIONS_NEED_UPDATE)
+    patchMachine(machine, (current) => ({
+      ...current,
+      jevError: null,
+      jev: null,
+      jevOutdated: true
+    }))
+  return done
 }
 
 /** The account's voices, read on that machine with its key. */
@@ -246,6 +330,17 @@ export function accountLine(status: ElevenLabsStatus): string | null {
   if (!figure) return null
   const parts = [figure.tier, figure.credits].filter((part): part is string => !!part)
   return parts.length ? parts.join(' · ') : 'Checked: ElevenLabs accepted the key.'
+}
+
+/** When the Jev key was last checked, as its row says it; null before a
+ *  check. */
+export function checkedOnLine(checkedAt: number | null): string | null {
+  if (checkedAt === null) return null
+  return `Checked on ${new Date(checkedAt).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  })}`
 }
 
 export function setOnLine(setAt: number | null): string {

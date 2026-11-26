@@ -68,6 +68,15 @@ const full = {
     since: 200,
     from: '0b7d4c1e-5f6a-4b3c-8d2e-1f0a9b8c7d6e'
   },
+  // PRDCT-5179: which projects the tab works on, as Jev last read it.
+  projects: {
+    status: 'decided' as const,
+    picks: [{ file: '/w/quill/.clave/workspaces/default.clave', name: 'Quill', p: 0.93 }],
+    fits: 0.91,
+    readAt: 300,
+    model: 'jev-1.14.0',
+    basis: 'basis-1'
+  },
   // PRDCT-5166: the writing style the tab was opened with.
   writingStyle: 'brief',
   live: true,

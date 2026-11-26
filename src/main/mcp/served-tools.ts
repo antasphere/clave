@@ -402,6 +402,14 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       windowId: windowIdOf(s.windowKey),
       // Which wave or lane the tab works on, as its record keeps it (PRDCT-4123).
       work: record?.work ?? null,
+      // Which projects the tab works on, as Jev last read it (PRDCT-5179):
+      // the status and each named project's share; absent when never read.
+      ...(record?.projects && {
+        projects: {
+          status: record.projects.status,
+          names: record.projects.picks.map((pick) => ({ name: pick.name, share: pick.p }))
+        }
+      }),
       // The tab it is shown under in the sidebar, as its record keeps it
       // (PRDCT-4997); parentId above is who opened it.
       nestedUnder: record?.spawnedBy ?? null,

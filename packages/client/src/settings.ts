@@ -29,6 +29,24 @@ const helpersMissing = <T>(run: Promise<T>): Promise<T> =>
       : error
   })
 
+/** A server released before the decisions' switches (PRDCT-5179): the same
+ *  404, said as the update it needs. The window says the same words
+ *  (`src/shared/decision-preferences.ts`; the test holds the two equal). */
+export const DECISIONS_NEED_UPDATE = 'This server needs an update to show its decisions.'
+export class DecisionPreferencesMissing extends Error {
+  readonly _tag = 'DecisionPreferencesMissing'
+  constructor() {
+    super(DECISIONS_NEED_UPDATE)
+    this.name = 'DecisionPreferencesMissing'
+  }
+}
+const decisionsMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new DecisionPreferencesMissing()
+      : error
+  })
+
 /** A server released before the writing styles (PRDCT-5166): the same 404,
  *  said as the update it needs. The window says the same words
  *  (`src/shared/writing-styles.ts`, which this package cannot import; the
@@ -82,6 +100,10 @@ export interface HelperPreferencePatch {
   readonly enabled?: boolean
   readonly model?: string | null
   readonly account?: HelperAccount
+}
+export type DecisionPreference = typeof S.DecisionPreferenceView.Type
+export interface DecisionPreferencePatch {
+  readonly enabled?: boolean
 }
 export type WritingStyle = typeof S.WritingStyleView.Type
 export type WritingStylesView = typeof S.WritingStylesView.Type
@@ -188,6 +210,14 @@ export interface SettingsClient {
       patch: HelperPreferencePatch
     ) => Promise<ReadonlyArray<HelperPreference>>
   }
+  /** The decisions' switches on that server (PRDCT-5179); both answer the list. */
+  readonly decisions: {
+    readonly list: () => Promise<ReadonlyArray<DecisionPreference>>
+    readonly set: (
+      id: string,
+      patch: DecisionPreferencePatch
+    ) => Promise<ReadonlyArray<DecisionPreference>>
+  }
   /** The writing styles of that server (PRDCT-5166); every call answers
    *  the whole view. */
   readonly writingStyles: {
@@ -211,6 +241,10 @@ export interface SettingsClient {
       modelId?: ElevenLabsModelId
     ) => Promise<IntegrationsStatus>
     readonly listElevenLabsVoices: () => Promise<ElevenLabsVoices>
+    /** The Jev key (PRDCT-5179), the same road as the ElevenLabs one. */
+    readonly setJevKey: (apiKey: string) => Promise<IntegrationsStatus>
+    readonly checkJev: () => Promise<IntegrationsStatus>
+    readonly removeJevKey: () => Promise<IntegrationsStatus>
   }
   readonly preferences: {
     readonly setAppIcon: (icon: AppIcon) => Promise<void>
@@ -364,6 +398,14 @@ export function settingsClient(callApi: Call): SettingsClient {
           call((g) => g.setHelperPreference({ payload: { helperId, ...patch } }))
         ).then((v) => v.helpers)
     },
+    decisions: {
+      list: () =>
+        decisionsMissing(call((g) => g.listDecisions({ payload: {} }))).then((v) => v.decisions),
+      set: (id, patch) =>
+        decisionsMissing(call((g) => g.setDecisionPreference({ payload: { id, ...patch } }))).then(
+          (v) => v.decisions
+        )
+    },
     writingStyles: {
       list: () => writingStylesMissing(call((g) => g.listWritingStyles({ payload: {} }))),
       save: (draft) =>
@@ -402,7 +444,10 @@ export function settingsClient(callApi: Call): SettingsClient {
           )
         ),
       listElevenLabsVoices: () =>
-        integrationsMissing(call((g) => g.listElevenLabsVoices({ payload: {} })))
+        integrationsMissing(call((g) => g.listElevenLabsVoices({ payload: {} }))),
+      setJevKey: (apiKey) => integrationsMissing(call((g) => g.setJevKey({ payload: { apiKey } }))),
+      checkJev: () => integrationsMissing(call((g) => g.checkJev({ payload: {} }))),
+      removeJevKey: () => integrationsMissing(call((g) => g.removeJevKey({ payload: {} })))
     },
     preferences: {
       setAppIcon: (icon) => call((g) => g.setAppIcon({ payload: { icon } })).then(done)

@@ -21,7 +21,7 @@ import { useNow } from '../../lib/use-now'
 import { QuotaOverview, ToolToggle, type Tool } from '../usage/UsagePanel'
 import type { ServerUsageProvider } from '../../store/server-settings-store'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
-import { HelpersList } from './HelpersSettings'
+import { DecisionsList, HelpersList } from './HelpersSettings'
 import { WritingStylesList } from './WritingStylesSettings'
 import { writingStylesDescription } from '../../store/writing-styles-store'
 import { IntegrationsList } from './IntegrationsSettings'
@@ -173,6 +173,9 @@ export function ServerHelpersSettings({ serverId }: { serverId: string }): React
         <ServerNotice serverId={serverId} {...page} />
         {page.connected && settings.status !== 'error' && (
           <HelpersList machine={serverId} machineName={name} accounts={settings.claude} />
+        )}
+        {page.connected && settings.status !== 'error' && (
+          <DecisionsList machine={serverId} machineName={name} />
         )}
       </div>
     </SettingsPage>

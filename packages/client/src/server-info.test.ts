@@ -97,6 +97,27 @@ describe('the helpers of an older server (PRDCT-4330)', () => {
   })
 })
 
+describe('the decisions of an older server (PRDCT-5179)', () => {
+  it('a router 404 on the decisions routes is said as an update the server needs', async () => {
+    const { DecisionPreferencesMissing, DECISIONS_NEED_UPDATE } = await import('./settings')
+    old = createServer((_request, response) => {
+      response
+        .writeHead(404, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ error: 'NotFound', message: 'route not found', correlationId: 'c' }))
+    })
+    await new Promise<void>((resolve) => old!.listen(0, '127.0.0.1', resolve))
+    const { port } = old.address() as { port: number }
+    api = createApiClient({ url: `http://127.0.0.1:${port}`, token: 't' })
+    await expect(api.settings.decisions.list()).rejects.toBeInstanceOf(DecisionPreferencesMissing)
+    await expect(api.settings.decisions.set('tab-project', { enabled: false })).rejects.toThrow(
+      DECISIONS_NEED_UPDATE
+    )
+    // The window reads the same words to say it (it cannot load the client).
+    const shared = await import('../../../src/shared/decision-preferences')
+    expect(DECISIONS_NEED_UPDATE).toBe(shared.DECISIONS_NEED_UPDATE)
+  })
+})
+
 describe('the integrations of an older server (PRDCT-4410)', () => {
   it('a router 404 on the integrations routes is said as an update the server needs', async () => {
     const { IntegrationsMissing, INTEGRATIONS_NEED_UPDATE } = await import('./settings')
@@ -112,6 +133,12 @@ describe('the integrations of an older server (PRDCT-4410)', () => {
     await expect(api.settings.integrations.setElevenLabsKey('xi-old-server')).rejects.toThrow(
       INTEGRATIONS_NEED_UPDATE
     )
+    // A server released before the Jev key (PRDCT-5179): the same grace.
+    await expect(api.settings.integrations.setJevKey('jev-old-server')).rejects.toBeInstanceOf(
+      IntegrationsMissing
+    )
+    await expect(api.settings.integrations.checkJev()).rejects.toThrow(INTEGRATIONS_NEED_UPDATE)
+    await expect(api.settings.integrations.removeJevKey()).rejects.toThrow(INTEGRATIONS_NEED_UPDATE)
     const shared = await import('../../../src/shared/elevenlabs')
     expect(INTEGRATIONS_NEED_UPDATE).toBe(shared.INTEGRATIONS_NEED_UPDATE)
   })

@@ -1,5 +1,6 @@
 import type { LimitReport } from '../../../shared/limit-report'
 import type { WorkAssignment } from '@clave/contract/work-rules'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
 
 /**
  * Every skin the app ships, as a runtime list — the union is derived from it
@@ -373,6 +374,10 @@ export interface Session {
    *  record keeps it (PRDCT-4123). Absent means an ordinary tab. Set by the
    *  agent tools and the entry's menu through the server, never by a title. */
   work?: WorkAssignment
+  /** Which projects this tab works on, as Jev last read it and its record
+   *  keeps it (PRDCT-5179). Absent means never read. Set by the server's
+   *  reading only (`readTabProjects`, `session.projects_read`). */
+  projects?: TabProjects
   /** The id of the writing style the tab's agent was given (PRDCT-5166),
    *  from the spawn's answer or the record; absent for a tab on none. A
    *  tab's runtime fact, never a `.clave` field. */
@@ -537,6 +542,14 @@ export interface SessionGroup {
    *  that pin instead of saving a copy of it (PRDCT-4830). Absent on a group
    *  made by hand, by an agent, or launched before the field existed. */
   templateId?: string
+  /** True while the group carries a name Clave gave it, or is still waiting
+   *  for one (PRDCT-5179): set only when a PERSON groups tabs, cleared the
+   *  moment anyone else names it (a person's rename, an agent's, a pin's).
+   *  Read by `lib/group-projects.ts`, which names the group from its tabs'
+   *  projects while it holds. It describes a live group, not a declared one:
+   *  it rides the sidebar layout and is never written to a `.clave` file nor
+   *  to a pin. */
+  autoNamed?: boolean
   color?: GroupTerminalColor | null
   /** Attached web view — persists with the group (serialized whole). */
   view?: GroupViewConfig | null

@@ -1,0 +1,38 @@
+{
+  "workspaceRoot": "/w",
+  "home": "/home/ada",
+  "tab": {
+    "firstMessage": "The toolbar of the Quill editor jumps when a document opens. Find why and fix it in the web app.",
+    "latestMessages": [
+      "Run the editor's tests again.",
+      "Good. Now the same jump on the settings page?",
+      "Commit it."
+    ],
+    "touched": {
+      "/w/labs/quill/quill-web/src/toolbar.tsx": 9,
+      "/w/labs/quill/quill-web/src/settings/page.tsx": 3,
+      "/w/labs/quill/quill-api/src/documents.ts": 1,
+      "/w/labs/atlas/README.md": 1
+    }
+  },
+  "options": [
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Quill",
+      "folder": "labs/quill",
+      "description": "Quill, a collaborative document editor: the web app (quill-web) and its API (quill-api)."
+    },
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Atlas",
+      "folder": "labs/atlas",
+      "description": "Atlas, the map tiles service and its public viewer."
+    },
+    {
+      "file": "/w/studio/lumen/.clave/workspaces/default.clave",
+      "name": "Lumen",
+      "folder": "studio/lumen",
+      "description": "Lumen, a marketing site built for a client: the pages, the CMS and its deploys."
+    }
+  ]
+}

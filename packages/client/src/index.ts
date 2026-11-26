@@ -91,6 +91,13 @@ export { gitClient, type GitClient } from './git'
 export { digestsClient, type DigestsClient } from './digests'
 // ── PRDCT-4411: the speech ──
 export { speechClient, type SpeechClient } from './speech'
+// ── PRDCT-5179: the decisions ──
+export {
+  decisionsClient,
+  type DecisionsClient,
+  DecisionsMissing,
+  DECISIONS_OUTDATED
+} from './decisions'
 // ── PRDCT-4472: the artefacts ──
 export { artefactsClient, type ArtefactsClient } from './artefacts'
 // ── Issue #266: the server's version and its self-upgrade ──

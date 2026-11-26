@@ -1,0 +1,29 @@
+{
+  "workspaceRoot": "/w",
+  "home": "/home/ada",
+  "tab": {
+    "firstMessage": "Book me a train from Brussels to Lyon on Friday morning, back on Sunday evening, second class, a window seat if there is one.",
+    "latestMessages": ["The 7:15 is fine.", "And add both trips to my calendar."],
+    "touched": {}
+  },
+  "options": [
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Quill",
+      "folder": "labs/quill",
+      "description": "Quill, a collaborative document editor: the web app (quill-web) and its API (quill-api)."
+    },
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Atlas",
+      "folder": "labs/atlas",
+      "description": "Atlas, the map tiles service and its public viewer."
+    },
+    {
+      "file": "/w/studio/lumen/.clave/workspaces/default.clave",
+      "name": "Lumen",
+      "folder": "studio/lumen",
+      "description": "Lumen, a marketing site built for a client: the pages, the CMS and its deploys."
+    }
+  ]
+}

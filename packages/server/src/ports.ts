@@ -71,6 +71,10 @@ export { type WriteLedgerStorage } from './sessions/writes'
 import { SpeechPort, type SpeechService } from './speech/port'
 
 export { SpeechPort, type SpeechService } from './speech/port'
+// ── PRDCT-5179: the decisions ──
+import { DecisionsPort, type DecisionsService } from './decisions/port'
+
+export { DecisionsPort, type DecisionsService } from './decisions/port'
 // ── PRDCT-4472: the artefacts ──
 import { ArtefactsPort, type ArtefactsService } from './artefacts/port'
 
@@ -130,6 +134,9 @@ export interface ServerPorts {
   // ── PRDCT-4411: the speech ──
   /** Text spoken with the machine's ElevenLabs voice, for a session the server has a record of. `SpeechPort.none` when absent: every call refused as unavailable. */
   readonly speech?: SpeechService
+  // ── PRDCT-5179: the decisions ──
+  /** The questions asked Jev with the machine's key, for the tabs the server has a record of. `DecisionsPort.none` when absent: every call refused as unavailable. */
+  readonly decisions?: DecisionsService
   // ── PRDCT-4473: the forwarded pages ──
   /** The loopback pages a client may reach through `/forward/<lease>/…`
    *  (`forward/route.ts`). A plain object, NOT a `Context.Tag`: only the
@@ -170,6 +177,8 @@ export const PortsLive = (
   | DevicesPort
   // ── PRDCT-4411: the speech ──
   | SpeechPort
+  // ── PRDCT-5179: the decisions ──
+  | DecisionsPort
   // ── PRDCT-4472: the artefacts ──
   | ArtefactsPort
 > => {
@@ -202,6 +211,8 @@ export const PortsLive = (
     DevicesPort.layer(ports.devices ?? DevicesPort.none),
     // ── PRDCT-4411: the speech ──
     SpeechPort.layer(ports.speech ?? SpeechPort.none),
+    // ── PRDCT-5179: the decisions ──
+    DecisionsPort.layer(ports.decisions ?? DecisionsPort.none),
     // ── PRDCT-4472: the artefacts ──
     ArtefactsPort.layer(ports.artefacts ?? ArtefactsPort.none)
   )

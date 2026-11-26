@@ -412,6 +412,22 @@ it('pins a live group as the group and one chat tab, never a photograph of its t
   ])
 })
 
+it('pins a group Clave named as a declared one: no flag on the pin nor in its .clave, and the group named for good (PRDCT-5179)', async () => {
+  useLocalWorkspace()
+  mocks.state.groups = [{ ...liveGroup(), autoNamed: true }]
+  mocks.state.sessions = liveTabs()
+  const made = pinned.pinGroupFromCurrent('group-live')
+  const [pg] = pinned.usePinnedStore.getState().pinnedGroups
+  expect(JSON.stringify(pg)).not.toContain('autoNamed')
+  expect(mocks.state.groups[0].autoNamed).toBeUndefined()
+  expect(mocks.state.groups[0].templateId).toBe(made!.pinnedId)
+  const writeClaveFile = vi.fn(async () => {})
+  window.electronAPI = { ...window.electronAPI, writeClaveFile } as unknown as Window['electronAPI']
+  await pinned.exportClaveFile(pg.id, '/repo/.clave', 'atlas.clave', false)
+  expect(writeClaveFile).toHaveBeenCalledTimes(1)
+  expect(JSON.stringify(writeClaveFile.mock.calls[0])).not.toContain('autoNamed')
+})
+
 it("keeps a root-anchored group's anchor on the pin's one tab", () => {
   useLocalWorkspace()
   mocks.state.groups = [liveGroup({ rootSession: true })]

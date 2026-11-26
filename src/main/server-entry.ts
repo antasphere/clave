@@ -130,6 +130,7 @@ import { chatDefaultFor } from '../shared/open-session-modes'
 import { ptyManager, loginShellEnvAsync, getUserShell, getLoginShellEnv } from './pty-manager'
 import { hostDigests, sessionLaunchOf } from './exchange-digest'
 import { hostSpeech } from './speech'
+import { hostDecisions } from './decisions/host'
 import {
   startWatching as startAgentStateWatching,
   stopWatching as stopAgentStateWatching
@@ -586,6 +587,15 @@ async function main(): Promise<void> {
       // ── PRDCT-4411: speech with this server's ElevenLabs key and voice, for
       // a session it has a record of ──
       speech: hostSpeech(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-5179: the decisions, asked of Jev with this server's key, for
+      // the tabs it has a record of, read against its own workspace files ──
+      decisions: hostDecisions({
+        recordOf: (sessionId) => ptyManager.getSessionRecord(sessionId),
+        setProjects: (sessionId, projects) => ptyManager.setSessionProjects(sessionId, projects),
+        workspaces: async () => (await standalone.settings.workspaces.load()).workspaces,
+        files: () => workspaceFilesInstance,
+        conversationOf: (sessionId) => ptyManager.conversationIdOf(sessionId)
+      }),
       // ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
       artefacts,
       forwards,

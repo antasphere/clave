@@ -2352,6 +2352,44 @@ canvas[data-orb-state] {
 
 /* ── Badges ── */
 
+/* A group's suggested projects after its name (PRDCT-5179,
+   SessionGroupItem.tsx): two quiet badges in the room the name leaves. The
+   box grows from nothing into the free space, so the name never gives up a
+   pixel to it (a shared shrink cut « Group 2 » to « Group … » beside half a
+   chip) and the group's own controls stay at the edge. It is one chip high
+   and its chips wrap: a chip that does not fit WHOLE goes to the second
+   line, which is never shown, so a narrow sidebar shows fewer chips, never
+   part of one. The zero-width first item lets the first chip wrap away too. */
+.group-suggestions {
+  --group-chip-h: 1.125rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  column-gap: 0.25rem;
+  flex: 1 1 0%;
+  min-width: 0;
+  height: var(--group-chip-h);
+  overflow: hidden;
+}
+.group-suggestions::before {
+  content: '';
+  width: 0;
+  height: var(--group-chip-h);
+  margin-right: -0.25rem;
+}
+.group-suggestions > .badge {
+  flex-shrink: 0;
+  height: var(--group-chip-h);
+  white-space: nowrap;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.group-suggestions > .badge:hover {
+  background-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-primary);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -2627,9 +2665,12 @@ canvas[data-orb-state] {
 }
 /* A callout or a second card that follows a card sits one row-gap step under
    it, owned here so no call site decides the distance (they used to: mt-2
-   on two of them, mt-3 on a third, nothing on the fourth). */
+   on two of them, mt-3 on a third, nothing on the fourth). A card under a
+   callout keeps the same step: the decisions' notice of a missing key sat
+   flush on their card (PRDCT-5179). */
 .settings-card + .settings-callout,
-.settings-card + .settings-card {
+.settings-card + .settings-card,
+.settings-callout + .settings-card {
   margin-top: 0.5rem;
 }
 /* The callout's actions: Cancel then the primary, right-aligned, on the
@@ -2714,18 +2755,18 @@ canvas[data-orb-state] {
 
 /* An integration's card (Settings → Integrations, IntegrationsSettings.tsx):
    its figure beside the row's words, in the `.chat-drawing` hand
-   (VoiceDrawing.tsx). In full beside the key field while there is no key;
+   (VoiceDrawing.tsx; DecisionDrawing.tsx for Jev). In full beside the key field while there is no key;
    small and still beside the account once a key is set. Under the figure's
    own rules, so every theme and skin restates it. */
 .integration-row {
   gap: 1.25rem;
 }
-.integration-row > .voice-drawing {
+.integration-row > :is(.voice-drawing, .decision-drawing) {
   flex-shrink: 0;
   width: calc(var(--spacing) * 30);
   height: auto;
 }
-.integration-row > .voice-drawing[data-quiet='true'] {
+.integration-row > :is(.voice-drawing, .decision-drawing)[data-quiet='true'] {
   align-self: flex-start;
   width: calc(var(--spacing) * 14);
   margin-top: 0.125rem;

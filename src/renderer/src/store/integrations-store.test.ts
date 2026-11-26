@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElevenLabsStatus } from '../../../shared/elevenlabs'
+import type { JevStatus } from '../../../shared/jev'
 
 // The Settings page's store of the integrations (PRDCT-4410): every read and
 // write goes to the machine the page names, the key passes through and is
@@ -27,7 +28,10 @@ const api = {
   fleetElevenLabsCheck: vi.fn(),
   fleetElevenLabsRemove: vi.fn(),
   fleetElevenLabsSetVoice: vi.fn(),
-  fleetElevenLabsVoices: vi.fn()
+  fleetElevenLabsVoices: vi.fn(),
+  fleetJevSetKey: vi.fn(),
+  fleetJevCheck: vi.fn(),
+  fleetJevRemove: vi.fn()
 }
 
 beforeAll(async () => {
@@ -196,5 +200,89 @@ describe('what the card says', () => {
       'eleven_flash_v2_5',
       'eleven_multilingual_v2'
     ])
+  })
+})
+
+// The Jev key (PRDCT-5179), kept beside the ElevenLabs one.
+describe('the Jev key', () => {
+  const jev = (over: Partial<JevStatus> = {}): JevStatus => ({
+    configured: false,
+    setAt: null,
+    checkedAt: null,
+    lastError: null,
+    ...over
+  })
+
+  it('every answer carries both cards: a Jev write keeps the ElevenLabs status', async () => {
+    const eleven = status({ configured: true, setAt: 1, checkedAt: 2 })
+    api.fleetIntegrations.mockResolvedValue({ elevenLabs: eleven, jev: jev() })
+    await store.loadIntegrations('local')
+    expect(store.useIntegrationsStore.getState().byMachine.local).toMatchObject({
+      jev: jev(),
+      jevOutdated: false
+    })
+    const set = jev({ configured: true, setAt: 10, checkedAt: 11 })
+    api.fleetJevSetKey.mockResolvedValue({ elevenLabs: eleven, jev: set })
+    expect(await store.setJevKey('local', 'ts-store-test-key')).toBe(true)
+    expect(api.fleetJevSetKey).toHaveBeenCalledWith('local', 'ts-store-test-key')
+    const local = store.useIntegrationsStore.getState().byMachine.local
+    expect(local.jev).toEqual(set)
+    expect(local.elevenLabs).toEqual(eleven)
+    expect(JSON.stringify(local)).not.toContain('ts-store-test-key')
+    api.fleetJevCheck.mockResolvedValue({ elevenLabs: eleven, jev: set })
+    await store.checkJev('local')
+    expect(api.fleetJevCheck).toHaveBeenCalledWith('local')
+    api.fleetJevRemove.mockResolvedValue({ elevenLabs: eleven, jev: jev() })
+    await store.removeJevKey('local')
+    expect(store.useIntegrationsStore.getState().byMachine.local.jev?.configured).toBe(false)
+  })
+
+  it('an answer with no jev is a server that needs an update, never an error', async () => {
+    api.fleetIntegrations.mockResolvedValue({ elevenLabs: status() })
+    await store.loadIntegrations('server-old')
+    const old = store.useIntegrationsStore.getState().byMachine['server-old']
+    expect(old).toMatchObject({ status: 'ready', error: null, jev: null, jevOutdated: true })
+    // A Jev write such a server refuses with the integrations' 404.
+    api.fleetJevSetKey.mockRejectedValue(
+      new Error('This server needs an update to show its integrations.')
+    )
+    expect(await store.setJevKey('server-old', 'ts-store-test-key')).toBe(false)
+    expect(store.useIntegrationsStore.getState().byMachine['server-old']).toMatchObject({
+      error: null,
+      jevError: null,
+      jevOutdated: true
+    })
+    expect(store.JEV_NEEDS_UPDATE).toBe('This server needs an update to hold a Jev key.')
+  })
+
+  it('a refusal in TypeSafe’s words is said whole; a raw error is not shown', async () => {
+    api.fleetIntegrations.mockResolvedValue({ elevenLabs: status(), jev: jev() })
+    await store.loadIntegrations('local')
+    api.fleetJevSetKey.mockRejectedValue(
+      new Error(
+        "Error invoking remote method 'integrations:jev-set-key': Error: TypeSafe refused the key: Error: the key is revoked."
+      )
+    )
+    await store.setJevKey('local', 'ts-store-test-key')
+    expect(store.useIntegrationsStore.getState().byMachine.local).toMatchObject({
+      // Said under the Jev card, never under the ElevenLabs one.
+      error: null,
+      jevError: 'TypeSafe refused the key: Error: the key is revoked.'
+    })
+    api.fleetJevCheck.mockRejectedValue(new Error('Error: The server could not reach TypeSafe.'))
+    await store.checkJev('local')
+    expect(store.useIntegrationsStore.getState().byMachine.local.jevError).toBe(
+      'The server could not reach TypeSafe.'
+    )
+    api.fleetJevRemove.mockRejectedValue(new Error('ECONNRESET at socket.ts:12'))
+    await store.removeJevKey('local')
+    const local = store.useIntegrationsStore.getState().byMachine.local
+    expect(local.jevError).toBe('The key could not be removed from the machine.')
+    expect(local.jev).toEqual(jev())
+  })
+
+  it('the checked line', () => {
+    expect(store.checkedOnLine(null)).toBeNull()
+    expect(store.checkedOnLine(Date.UTC(2026, 10, 25, 12))).toBe('Checked on 25 November 2026')
   })
 })

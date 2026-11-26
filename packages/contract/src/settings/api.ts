@@ -49,6 +49,7 @@ import {
   UpsertLaunchProfile
 } from './launch-profiles'
 import { ListHelperPreferences, SetHelperPreference } from './helpers'
+import { ListDecisions, SetDecisionPreference } from './decisions'
 import {
   DeleteWritingStyle,
   ImportClaudeOutputStyle,
@@ -62,7 +63,10 @@ import {
   ReadIntegrations,
   RemoveElevenLabsKey,
   SetElevenLabsKey,
-  SetElevenLabsVoice
+  SetElevenLabsVoice,
+  CheckJev,
+  RemoveJevKey,
+  SetJevKey
 } from './integrations'
 import { SetAppIcon } from './preferences'
 import {
@@ -243,6 +247,9 @@ export const settingsGroup = ApiGroup.make('settings')
   // The helpers (PRDCT-4330)
   .add(HttpCqrs.queryEndpoint('listHelperPreferences', '/helpers', ListHelperPreferences))
   .add(HttpCqrs.commandEndpoint('setHelperPreference', '/helpers', SetHelperPreference))
+  // The decisions (PRDCT-5179): one switch each, on the machine that runs them
+  .add(HttpCqrs.queryEndpoint('listDecisions', '/decisions', ListDecisions))
+  .add(HttpCqrs.commandEndpoint('setDecisionPreference', '/decisions', SetDecisionPreference))
   // The writing styles (PRDCT-5166): the machine's styles and its default
   .add(HttpCqrs.queryEndpoint('listWritingStyles', '/writing-styles', ListWritingStyles))
   .add(HttpCqrs.commandEndpoint('saveWritingStyle', '/writing-styles', SaveWritingStyle))
@@ -290,6 +297,10 @@ export const settingsGroup = ApiGroup.make('settings')
       ListElevenLabsVoices
     )
   )
+  // The Jev key (PRDCT-5179), sealed beside the ElevenLabs one
+  .add(HttpCqrs.commandEndpoint('setJevKey', '/integrations/jev/key', SetJevKey))
+  .add(HttpCqrs.commandEndpoint('checkJev', '/integrations/jev/check', CheckJev))
+  .add(HttpCqrs.commandEndpoint('removeJevKey', '/integrations/jev/remove', RemoveJevKey))
   // Preferences
   .add(HttpCqrs.commandEndpoint('setAppIcon', '/preferences/app-icon', SetAppIcon))
   // Workspaces

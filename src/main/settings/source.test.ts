@@ -13,6 +13,7 @@ import { LaunchProfileManager } from '../launch-profile-manager'
 import { PreferencesManager } from '../preferences-manager'
 import { WorkspaceManager } from '../workspace-manager'
 import { HelperPreferences } from '../helpers/preferences'
+import { DecisionPreferences } from '../decisions/preferences'
 import { WritingStylesStore, WRITING_STYLES_FILE } from '../writing-styles/store'
 import { ElevenLabsIntegration } from '../integrations/elevenlabs'
 import type { LoginJob } from '../account-login'
@@ -20,6 +21,7 @@ import { electronTestPorts, tempDataDir } from '../ports/testing'
 import {
   DEFAULT_ACCOUNT_ID,
   type AntasphereAccountLike,
+  type JevLike,
   type LoginJobsLike,
   type SettingsManagers,
   // ── Lane B (harness wave): provider connections ──
@@ -187,6 +189,30 @@ describe('the settings source over the real managers', () => {
     })
   })
 
+  it('refuses the decisions without a store, and writes them to this host’s with one (PRDCT-5179)', async () => {
+    const bare = settingsSourceFromManagers(managers)
+    await expect(Promise.resolve().then(() => bare.decisions.list())).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'decisions'
+    })
+    const source = settingsSourceFromManagers({
+      ...build(),
+      decisions: new DecisionPreferences(electronTestPorts(dir))
+    })
+    expect((await source.decisions.list()).find((d) => d.id === 'tab-project')).toMatchObject({
+      enabled: true
+    })
+    const after = await source.decisions.set('tab-project', { enabled: false })
+    expect(after.find((d) => d.id === 'tab-project')).toMatchObject({ enabled: false })
+    // On this host's disk: the runner of either process reads it there.
+    expect(new DecisionPreferences(electronTestPorts(dir)).configFor('tab-project')).toEqual({
+      enabled: false
+    })
+    await expect(
+      Promise.resolve().then(() => source.decisions.set('nope', { enabled: false }))
+    ).rejects.toThrow('There is no decision "nope" on this machine.')
+  })
+
   it('refuses the writing styles without a store, and writes them to this host’s with one (PRDCT-5166)', async () => {
     const bare = settingsSourceFromManagers(managers)
     await expect(Promise.resolve().then(() => bare.writingStyles.list())).rejects.toMatchObject({
@@ -240,6 +266,76 @@ describe('the settings source over the real managers', () => {
       expect(fs.readFileSync(path.join(dir, 'integrations.json'), 'utf-8')).not.toContain(
         'xi-source-test-key'
       )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('carries both keys’ statuses in every integrations answer, and refuses Jev without a store (PRDCT-5179)', async () => {
+    const jevKeys: string[] = []
+    let jevStatus = {
+      configured: false,
+      setAt: null,
+      checkedAt: null,
+      lastError: null
+    } as ReturnType<JevLike['status']>
+    const jev: JevLike = {
+      status: () => jevStatus,
+      setKey: async (apiKey) => {
+        jevKeys.push(apiKey)
+        return (jevStatus = { configured: true, setAt: 5, checkedAt: 5, lastError: null })
+      },
+      check: async () => (jevStatus = { ...jevStatus, checkedAt: 6 }),
+      removeKey: async () =>
+        (jevStatus = { configured: false, setAt: null, checkedAt: null, lastError: null })
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ tier: 'free' }), { status: 200 }))
+    )
+    try {
+      const integrations = new ElevenLabsIntegration(electronTestPorts(dir), {
+        baseUrl: () => 'http://elevenlabs.test'
+      })
+      const noJev = settingsSourceFromManagers({ ...build(), integrations })
+      expect(await noJev.integrations.read()).not.toHaveProperty('jev')
+      await expect(
+        Promise.resolve().then(() => noJev.integrations.setJevKey('jev-source-test-key'))
+      ).rejects.toMatchObject({ _tag: 'CapabilityUnavailable', capability: 'integrations' })
+      expect(jevKeys).toEqual([])
+
+      const source = settingsSourceFromManagers({ ...build(), integrations, jev })
+      const set = await source.integrations.setJevKey('jev-source-test-key')
+      expect(set).toMatchObject({
+        elevenLabs: { configured: false },
+        jev: { configured: true, setAt: 5 }
+      })
+      expect(JSON.stringify(set)).not.toContain('jev-source-test-key')
+      expect(jevKeys).toEqual(['jev-source-test-key'])
+      // An ElevenLabs write keeps the Jev card, and a Jev write the ElevenLabs one.
+      const eleven = await source.integrations.setElevenLabsKey('xi-source-test-key')
+      expect(eleven).toMatchObject({
+        elevenLabs: { configured: true, tier: 'free' },
+        jev: { configured: true }
+      })
+      for (const answer of [
+        await source.integrations.read(),
+        await source.integrations.checkElevenLabs(),
+        await source.integrations.checkJev(),
+        await source.integrations.setElevenLabsVoice('v1', 'Voice one', undefined)
+      ])
+        expect(answer).toMatchObject({
+          elevenLabs: { configured: true },
+          jev: { configured: true }
+        })
+      expect(await source.integrations.removeJevKey()).toMatchObject({
+        elevenLabs: { configured: true },
+        jev: { configured: false }
+      })
+      expect(await source.integrations.removeElevenLabsKey()).toMatchObject({
+        elevenLabs: { configured: false },
+        jev: { configured: false }
+      })
     } finally {
       vi.unstubAllGlobals()
     }

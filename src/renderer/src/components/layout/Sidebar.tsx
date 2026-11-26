@@ -121,6 +121,7 @@ import {
   ArrowTurnDownRightIcon
 } from '@heroicons/react/24/outline'
 import { antigravitySettingField } from '../../lib/antigravity-setting-field'
+import { groupTabsByPerson } from '../../lib/group-projects'
 
 // The height of a tab menu's account header with its usage bars, its
 // separator and the menu's padding (AccountMenuHeader with `chart`): the
@@ -239,7 +240,6 @@ export function Sidebar(): React.JSX.Element {
   const removeSession = useSessionStore((s) => s.removeSession)
   const groups = useSessionStore((s) => s.groups)
   const displayOrder = useSessionStore((s) => s.displayOrder)
-  const createGroup = useSessionStore((s) => s.createGroup)
   const toggleGroupCollapsed = useSessionStore((s) => s.toggleGroupCollapsed)
   const setGroupView = useSessionStore((s) => s.setGroupView)
   const setActiveGroupView = useSessionStore((s) => s.setActiveGroupView)
@@ -1691,7 +1691,8 @@ export function Sidebar(): React.JSX.Element {
           label: 'Group',
           icon: <Squares2X2Icon className="w-3.5 h-3.5" />,
           shortcut: shortcutLabel('groupSelectedSessions') ?? undefined,
-          onClick: () => createGroup(state.selectedSessionIds)
+          // A person's grouping: Clave may name it from its tabs (PRDCT-5179).
+          onClick: () => groupTabsByPerson(state.selectedSessionIds)
         })
       }
       // Nesting from the menu (PRDCT-4997), the drag's two moves in words: a
@@ -1800,7 +1801,6 @@ export function Sidebar(): React.JSX.Element {
       }
     },
     [
-      createGroup,
       handleDeleteSession,
       handleDuplicateSession,
       handleResumeSession,

@@ -255,6 +255,22 @@ describe('groups', () => {
     expect(missing).toEqual({ ok: false, error: { _tag: 'GroupNotFound', groupId: 'nope' } })
     expect(layouts.setGroupView('w1', 'nope', null).ok).toBe(false)
   })
+  it('a rename by command makes the name its author’s: the group leaves Clave’s naming', () => {
+    // PRDCT-5179: Clave names a person's group in the window's store, so a
+    // RenameGroup is always someone else's (an agent's clave_rename).
+    const { layouts, storage } = setup({
+      w1: { groups: [group('g1', ['a'], { name: 'Quill', autoNamed: true })], displayOrder: ['g1'] }
+    })
+    expect(layouts.get('w1').groups[0].autoNamed).toBe(true)
+    const renamed = layouts.renameGroup('w1', 'g1', 'Agent picked')
+    expect(renamed.ok && renamed.value.groups[0]).toEqual(
+      group('g1', ['a'], { name: 'Agent picked' })
+    )
+    expect(layouts.get('w1').groups[0]).not.toHaveProperty('autoNamed')
+    const stored = storage.documents.get('w1') as { groups: Array<Record<string, unknown>> }
+    expect(stored.groups[0]).not.toHaveProperty('autoNamed')
+    expect(stored.groups[0].name).toBe('Agent picked')
+  })
   const withTerminal = {
     w1: {
       groups: [group('g1', ['a', 'b', 't'], { terminals: [terminal('k1', 't')] })],

@@ -13,6 +13,7 @@ import { Client } from './clients'
 import { FilesDirsChanged } from './files'
 import { AccountOverride, AgentState, SessionPage, RestartRequestId } from './sessions'
 import { WorkAssignment } from './work'
+import { TabProjects } from './tab-projects'
 import { SettingsEvent } from './settings'
 import { OverviewChanged, SidebarEvent } from './sidebar/layout'
 import { WorkspaceFilesEvent } from './workspace-files/model'
@@ -103,6 +104,13 @@ export const ServerEvent = Schema.Union(
   Schema.TaggedStruct('session.work_changed', {
     id: Schema.String,
     work: Schema.NullOr(WorkAssignment)
+  }),
+  /** Which projects a tab works on was read again (PRDCT-5179): the record's
+   *  new reading, or null when it holds none. Published only once the
+   *  record was written. */
+  Schema.TaggedStruct('session.projects_read', {
+    id: Schema.String,
+    projects: Schema.NullOr(TabProjects)
   }),
   /** A tab was nested under another tab, or taken out with `under` null
    *  (PRDCT-4997): the record's `spawnedBy`, which the sidebar folds by. */

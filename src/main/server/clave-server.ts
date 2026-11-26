@@ -108,10 +108,19 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
   // PRDCT-4327: the digests a client of this server asks for, read on this
   // process's own record of the session and filed in its own data folder.
   // PRDCT-4411: its speech, with this process's ElevenLabs key and voice.
-  const [{ hostDigests, sessionLaunchOf }, { ptyManager }, { hostSpeech }] = await Promise.all([
+  // PRDCT-5179: its decisions, with this process's Jev key, on its records.
+  const [
+    { hostDigests, sessionLaunchOf },
+    { ptyManager },
+    { hostSpeech },
+    { hostDecisions },
+    { workspaceManager }
+  ] = await Promise.all([
     import('../exchange-digest'),
     import('../pty-manager'),
-    import('../speech')
+    import('../speech'),
+    import('../decisions/host'),
+    import('../workspace-manager')
   ])
   // ── Mobile wave, lane A: the devices port, the shell's own Antasphere login as the owner ──
   // Loaded beside the server package (a dynamic import, so this seam stays as
@@ -145,6 +154,14 @@ async function start(options: StartOptions): Promise<ClaveServerEndpoint> {
         })
       }),
       speech: hostSpeech(sessionLaunchOf(ptyManager)),
+      // ── PRDCT-5179: the decisions, on this process's records and `.clave` files ──
+      decisions: hostDecisions({
+        recordOf: (sessionId) => ptyManager.getSessionRecord(sessionId),
+        setProjects: (sessionId, projects) => ptyManager.setSessionProjects(sessionId, projects),
+        workspaces: () => workspaceManager.load().workspaces,
+        files: () => ports.workspaceFiles,
+        conversationOf: (sessionId) => ptyManager.conversationIdOf(sessionId)
+      }),
       ...(artefacts && { artefacts: artefacts.service, forwards: artefacts.forwards }),
       ...(options.appVersion !== undefined && {
         serverInfo: ServerInfoPort.appRun(

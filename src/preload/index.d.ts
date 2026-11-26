@@ -20,6 +20,7 @@ import type {
   ReviewEvent
 } from '../shared/github-pull'
 import type { WorkAssignment, WorkChange, WorkChangeResult } from '@clave/contract/work-rules'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
 import type { NestResult } from '@clave/contract/nest-rules'
 import type { TimelinePage } from '@clave/contract/timeline'
 
@@ -72,7 +73,22 @@ import type {
   HelperPreferencePatch
 } from '../shared/helper-preferences'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { DecisionPreference, DecisionPreferencePatch } from '../shared/decision-preferences'
 import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
+/** Why a tab got no new reading: the wire's reasons
+ *  (`DECISION_FAILURE_REASONS` of `@clave/contract/decisions`, which this
+ *  file cannot import: the web typecheck would follow it into the HTTP
+ *  framework). `src/preload/index.ts` holds the two lists equal. */
+export type DecisionFailureReason =
+  | 'no-key'
+  | 'disabled'
+  | 'nothing'
+  | 'refused'
+  | 'unreachable'
+  | 'limit'
+  | 'unreadable'
+  | 'failed'
+  | 'cancelled'
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 import type { ModelsCatalogView } from '@clave/contract/settings/models-catalog-view'
 // Lane C of the harness wave (PRDCT-4496): a connection's usage line
@@ -92,6 +108,16 @@ export type { DownloadProgress, ReleaseNote, UpdaterState, WindowIdentity }
 export type { LaunchProfile, LaunchProfilePreferences, LauncherFamily, PiThinkingLevel }
 export type { HelperAccount, HelperPreference, HelperPreferencePatch }
 export type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus }
+export type { DecisionPreference, DecisionPreferencePatch, TabProjects }
+
+/** One tab's answer to `readTabProjects` (PRDCT-5179): the reading its
+ *  record now holds (null when none), and why no new one was made, absent
+ *  when one was or the record's was still good. */
+export interface TabProjectsRead {
+  sessionId: string
+  projects: TabProjects | null
+  reason?: DecisionFailureReason
+}
 
 /** Main's answer to `windowSetWorkspace`. Any window may show any workspace;
  *  only an unknown one is refused. */
@@ -577,6 +603,9 @@ export interface SessionRecord {
   /** Which wave or lane the tab works on, its role and its standing
    *  (PRDCT-4123). Absent = an ordinary tab. */
   work?: WorkAssignment
+  /** Which projects the tab works on, as Jev last read it (PRDCT-5179).
+   *  Absent = never read. */
+  projects?: TabProjects
   /** The conversation came from another provider (PRDCT-4300): which, and
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. */
@@ -1029,6 +1058,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  `fleetHelpers` / `fleetHelperSet`. */
   helpersList: () => Promise<HelperPreference[]>
   helperSet: (helperId: string, patch: HelperPreferencePatch) => Promise<HelperPreference[]>
+  /** This Mac's decisions (PRDCT-5179): every declared one with its switch;
+   *  a write answers the whole list. A server's are `fleetDecisions` /
+   *  `fleetDecisionSet`. */
+  decisionsList: () => Promise<DecisionPreference[]>
+  decisionSet: (decisionId: string, patch: DecisionPreferencePatch) => Promise<DecisionPreference[]>
   /** This Mac's writing styles (PRDCT-5166): the built-in styles and its
    *  own, the default a tab starts with, and Claude Code's output style.
    *  Every write answers the whole view. A server's are `fleetWritingStyles`
@@ -1055,6 +1089,12 @@ export interface ElectronAPI extends FleetDesktopAPI {
   /** A voice's preview sample, fetched by this Mac's server (PRDCT-4411).
    *  A failure is a result, never a rejection. */
   elevenLabsPreview: (voiceId: string) => Promise<SpeakResult>
+  /** This Mac's Jev key (PRDCT-5179), the same road as the ElevenLabs key:
+   *  every write answers the status of both, never the key. A server's are
+   *  the `fleetJev*` members. */
+  jevSetKey: (apiKey: string) => Promise<IntegrationsStatus>
+  jevCheck: () => Promise<IntegrationsStatus>
+  jevRemove: () => Promise<IntegrationsStatus>
   spawnSession: (
     cwd: string,
     options?: {
@@ -1161,6 +1201,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  belongs to no wave or lane any more. */
   onSessionWorkChanged: (
     callback: (payload: { id: string; work: WorkAssignment | null }) => void
+  ) => () => void
+  /** PRDCT-5179: which projects a tab works on was read again; null when
+   *  its record holds no reading. */
+  onSessionProjectsRead: (
+    callback: (payload: { id: string; projects: TabProjects | null }) => void
   ) => () => void
   /** PRDCT-4997: the tab a tab is nested under changed on its record; null
    *  when it was taken out. */
@@ -1388,6 +1433,11 @@ export interface ElectronAPI extends FleetDesktopAPI {
    *  the server the tab runs on (PRDCT-4411). A failure is a result with its
    *  reason (no key, no voice, refused, credits spent…), never a rejection. */
   speakText: (request: SpeakRequest) => Promise<SpeakResult>
+  /** Which projects these tabs work on (PRDCT-5179), read by the server that
+   *  owns them with its Jev key and kept on each tab's record. The ids of one
+   *  call share one owner. « No key » and « switched off » are each tab's
+   *  `reason`, never a rejection. */
+  readTabProjects: (sessionIds: string[]) => Promise<{ tabs: TabProjectsRead[] }>
   pageTitle: (request: PageTitleRequest) => Promise<PageTitleResult>
   /** Every page title already read for a tab, by key. */
   pageTitlesOf: (sessionId: string) => Promise<Record<string, PageTitleDone>>

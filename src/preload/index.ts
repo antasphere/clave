@@ -33,6 +33,9 @@ import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
 import { NEST_SERVER_NOT_NAMED, nestAnswerError } from '../shared/nest-tools'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { DecisionPreference, DecisionPreferencePatch } from '../shared/decision-preferences'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
+import type { DecisionFailureReason as WireReason } from '@clave/contract/decisions'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
   PluginSecretPrompt,
@@ -42,7 +45,8 @@ import type {
   SessionInfo,
   // ── Lane B (harness wave): provider connections ──
   ProviderConnection,
-  ProviderConnectionAddInput
+  ProviderConnectionAddInput,
+  TabProjectsRead
 } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
@@ -325,6 +329,19 @@ const viaOwnServer = <A extends unknown[], R>(route: {
     if (!backing) throw new Error('The server did not answer')
     return route.server(backing, ...args)
   }
+}
+// The bridge's reasons are the wire's own: one added to either list and not
+// the other is a type error here.
+type SameReasons<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const reasonsAgree: SameReasons<TabProjectsRead['reason'], WireReason | undefined> = true
+void reasonsAgree
+/** The decisions' read on a server (PRDCT-5179), as the bridge types it. */
+const readTabProjectsOn = async (
+  { api }: Backing,
+  sessionIds: string[]
+): Promise<{ tabs: TabProjectsRead[] }> => {
+  const { tabs } = await api.decisions.readTabProjects(sessionIds)
+  return { tabs: loose<TabProjectsRead[]>(tabs) }
 }
 /** The wire subscriptions `sessionsSubscribe` holds on the server, per session. */
 const heldSubscriptions = new Map<string, () => void>()
@@ -1382,6 +1399,16 @@ const electronAPI = {
     server: async ({ api }, helperId, patch) =>
       loose<HelperPreference[]>(await api.settings.helpers.set(helperId, patch))
   }),
+  // ── Settings: the decisions' switches of this Mac (PRDCT-5179), the same road ──
+  decisionsList: viaServer<[], DecisionPreference[]>({
+    ipc: () => ipcRenderer.invoke('decisions:list'),
+    server: async ({ api }) => loose<DecisionPreference[]>(await api.settings.decisions.list())
+  }),
+  decisionSet: viaServer<[string, DecisionPreferencePatch], DecisionPreference[]>({
+    ipc: (decisionId, patch) => ipcRenderer.invoke('decisions:set', { decisionId, patch }),
+    server: async ({ api }, decisionId, patch) =>
+      loose<DecisionPreference[]>(await api.settings.decisions.set(decisionId, patch))
+  }),
   // ── Settings: the writing styles of this Mac (PRDCT-5166), with a server arm ──
   writingStylesList: viaServer<[], WritingStylesView>({
     ipc: () => ipcRenderer.invoke('writing-styles:list'),
@@ -1448,6 +1475,21 @@ const electronAPI = {
   elevenLabsPreview: viaServer<[string], SpeakResult>({
     ipc: (voiceId) => ipcRenderer.invoke('speech:preview', voiceId),
     server: async ({ api }, voiceId) => (await api.speech.preview({ voiceId })) as SpeakResult
+  }),
+  // The Jev key (PRDCT-5179), on the ElevenLabs key's road: in once, never back.
+  jevSetKey: viaServer<[string], IntegrationsStatus>({
+    ipc: (apiKey) => ipcRenderer.invoke('integrations:jev-set-key', apiKey),
+    server: async ({ api }, apiKey) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.setJevKey(apiKey))
+  }),
+  jevCheck: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:jev-check'),
+    server: async ({ api }) => loose<IntegrationsStatus>(await api.settings.integrations.checkJev())
+  }),
+  jevRemove: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:jev-remove'),
+    server: async ({ api }) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.removeJevKey())
   }),
   spawnSession: viaServer<
     [
@@ -1663,6 +1705,13 @@ const electronAPI = {
   ) =>
     onServerEventOf('session.work_changed', (event) =>
       callback({ id: event.id, work: event.work as WorkAssignment | null })
+    ),
+  // PRDCT-5179: which projects a tab works on, as its record now keeps it.
+  onSessionProjectsRead: (
+    callback: (payload: { id: string; projects: TabProjects | null }) => void
+  ) =>
+    onServerEventOf('session.projects_read', (event) =>
+      callback({ id: event.id, projects: event.projects as TabProjects | null })
     ),
   // PRDCT-4997: the tab a tab is nested under, as its record now keeps it.
   onSessionNested: (callback: (payload: { id: string; under: string | null }) => void) =>
@@ -2204,6 +2253,18 @@ const electronAPI = {
     ipc: (request) => ipcRenderer.invoke('speech:speak', request),
     server: async ({ api }, { sessionId, text }) =>
       (await api.speech.speak({ sessionId, text })) as SpeakResult
+  }),
+  // Which projects these tabs work on (PRDCT-5179), asked of the server the
+  // tabs run on, which holds the Jev key and the records; the same road as
+  // the speech. Main reads no tab for it: before main names its server, the
+  // call waits for it, as the digests do for a server of their own.
+  readTabProjects: viaOwnServer<[string[]], { tabs: TabProjectsRead[] }>({
+    ipc: async (sessionIds) => {
+      const backing = serverBacking ?? (await serverWithin(DIGEST_SERVER_WAIT_MS))
+      if (!backing) throw new Error('The server did not answer')
+      return readTabProjectsOn(backing, sessionIds)
+    },
+    server: (backing, sessionIds) => readTabProjectsOn(backing, sessionIds)
   }),
   pageTitle: viaOwnServer<[PageTitleRequest], PageTitleResult>({
     ipc: (request) => ipcRenderer.invoke('pages:title', request),

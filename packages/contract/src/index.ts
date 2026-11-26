@@ -48,5 +48,7 @@ export * as Devices from './devices'
 export * as Speech from './speech'
 // ── PRDCT-4472: the artefacts of the server a session runs on ──
 export * as Artefacts from './artefacts'
+// ── PRDCT-5179: the decisions the server a tab runs on asks Jev ──
+export * as Decisions from './decisions'
 
 // ── Lane B: terminals · Lane D: settings served ──

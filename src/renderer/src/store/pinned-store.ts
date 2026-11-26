@@ -1142,8 +1142,15 @@ export function pinGroupFromCurrent(
   // The group remembers the pin made from it, as a group remembers the pin it
   // was launched from: the link above dies with the window, and after a
   // restart nothing else would say this group is pinned already.
+  // A pinned group's name is its pin's from now on (PRDCT-5179): Clave no
+  // longer names it from its tabs.
   useSessionStore.setState((s) => ({
-    groups: s.groups.map((g) => (g.id === groupId ? { ...g, templateId: pinned.id } : g))
+    groups: s.groups.map((g) => {
+      if (g.id !== groupId) return g
+      const { autoNamed: _live, ...declared } = g
+      void _live
+      return { ...declared, templateId: pinned.id }
+    })
   }))
   return { pinnedId: pinned.id, created: true }
 }

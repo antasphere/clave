@@ -39,6 +39,8 @@ import { routinesClient, type RoutinesClient } from './routines'
 import { digestsClient, type DigestsClient } from './digests'
 // ── PRDCT-4411: the speech ──
 import { speechClient, type SpeechClient } from './speech'
+// ── PRDCT-5179: the decisions ──
+import { decisionsClient, type DecisionsClient } from './decisions'
 // ── PRDCT-4472: the artefacts ──
 import { artefactsClient, type ArtefactsClient } from './artefacts'
 
@@ -101,6 +103,8 @@ export interface ClaveApiClient {
   readonly digests: DigestsClient
   // ── PRDCT-4411: the speech (`./speech.ts`) ──
   readonly speech: SpeechClient
+  // ── PRDCT-5179: the decisions (`./decisions.ts`) ──
+  readonly decisions: DecisionsClient
   // ── PRDCT-4472: the artefacts (`./artefacts.ts`) ──
   readonly artefacts: ArtefactsClient
   // ── Issue #407: the relay address and the relay client's state (`./devices.ts`) ──
@@ -193,6 +197,8 @@ export function createApiClient(options: ApiClientOptions): ClaveApiClient {
     digests: digestsClient(call, patientCall),
     // ── PRDCT-4411: the speech ──
     speech: speechClient(call, patientCall),
+    // ── PRDCT-5179: the decisions ──
+    decisions: decisionsClient(call, patientCall),
     // ── PRDCT-4472: the artefacts ──
     artefacts: artefactsClient(call, patientCall),
     // ── Issue #407: the relay address and the relay client's state ──

@@ -539,6 +539,39 @@ describe('serveCommand', () => {
     expect(listed.sessions.find((s) => s.id === 'plain')?.nestedUnder).toBeNull()
   })
 
+  it('says which projects a tab works on as its record keeps the reading, and nothing when never read (PRDCT-5179)', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['read', 'unread'] })])],
+      sessions: [session('read'), session('unread')],
+      records: {
+        read: record('read', {
+          projects: {
+            status: 'undecided',
+            picks: [
+              { file: '/w/quill/.clave/workspaces/default.clave', name: 'Quill', p: 0.55 },
+              { file: '/w/atlas/.clave/workspaces/default.clave', name: 'Atlas', p: 0.3 }
+            ],
+            fits: 0.8,
+            readAt: 1,
+            model: 'jev-1.14.0',
+            basis: 'b'
+          }
+        }),
+        unread: record('unread', {})
+      }
+    })
+    type Listing = { sessions: Record<string, unknown>[] }
+    const listed = (await serveCommand('list', {}, h.ctx())) as Listing
+    expect(listed.sessions.find((s) => s.id === 'read')?.projects).toEqual({
+      status: 'undecided',
+      names: [
+        { name: 'Quill', share: 0.55 },
+        { name: 'Atlas', share: 0.3 }
+      ]
+    })
+    expect(listed.sessions.find((s) => s.id === 'unread')).not.toHaveProperty('projects')
+  })
+
   it('says the writing style each tab was opened with, and no style key for a tab on none (PRDCT-5166)', async () => {
     const h = setup({
       layouts: [layout('wA', [group('gA', { sessionIds: ['styled', 'plain'] })])],

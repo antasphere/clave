@@ -83,6 +83,13 @@ export { createServerFiles, type ServerFilesOptions, FilesPort, type FilesServic
 export { DigestsPort, type DigestsService, digestHandlers } from './digests'
 // ── PRDCT-4411: the speech of the server a tab runs on ──
 export { SpeechPort, type SpeechService, speechHandlers } from './speech'
+// ── PRDCT-5179: the decisions the server a tab runs on asks Jev ──
+export {
+  DecisionsPort,
+  type DecisionsService,
+  type TabProjectsReadOnHost,
+  decisionHandlers
+} from './decisions'
 // ── PRDCT-4472: the artefacts of the server a session runs on ──
 export {
   ArtefactsPort,

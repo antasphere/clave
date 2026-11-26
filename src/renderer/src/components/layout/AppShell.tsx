@@ -67,6 +67,7 @@ import { promptRestore } from '../../store/restore-prompt-store'
 import { RestorePromptDialog } from '../ui/RestorePromptDialog'
 import { initMcpDispatcher } from '../../lib/mcp-dispatcher'
 import { initServedToolsEvents } from '../../lib/served-events'
+import { groupTabsByPerson, startGroupNaming } from '../../lib/group-projects'
 import { installProviderSwitchRoad } from '../../lib/switch-provider'
 import { placeRecords, adoptRehomed, adoptHiddenRecord } from '../../lib/adopt-record'
 import { startServerChatSync } from '../../lib/server-chat-sync'
@@ -416,6 +417,9 @@ export function AppShell(): React.JSX.Element {
       // merge above was replaced by the saved layout and never drawn.
       document.documentElement.dataset.boot = 'complete'
       startDesktopFleet()
+      // The groups a person made read their tabs again when they change; the
+      // state the boot left is the baseline, so nothing is read now (PRDCT-5179).
+      startGroupNaming()
       startServerChatSync(window.electronAPI)
 
       // Attached, the records are the SERVER's: the boot read above went over
@@ -726,7 +730,8 @@ export function AppShell(): React.JSX.Element {
       selectSession9: () => selectByIndex(8),
       groupSelectedSessions: () => {
         const state = useSessionStore.getState()
-        if (state.selectedSessionIds.length > 0) state.createGroup(state.selectedSessionIds)
+        // A person's grouping: Clave may name it from its tabs (PRDCT-5179).
+        if (state.selectedSessionIds.length > 0) groupTabsByPerson(state.selectedSessionIds)
       },
       ungroupSelectedSessions: () => {
         const state = useSessionStore.getState()
