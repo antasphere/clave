@@ -1,5 +1,10 @@
 [
   {
+    "version": "next",
+    "title": "A group you make names itself after its project",
+    "description": "Select a few tabs and group them (⌘G, or Group in the sidebar's menu): the group comes up as \"Group 4\" at once, then takes the name of the project its tabs work on, or both names when they work on two. The projects are the groups of your workspace's trusted .clave files, and each tab is read from what it said and the folders its tools touched.\n\nThe reading is asked of Jev, TypeSafe's decision model, with a key of your own: paste one in Settings → Integrations, under ElevenLabs. Clave names a group only when Jev is sure; when it hesitates, the group keeps its name and shows the two nearest projects with their shares, one click to take either. A name you or an agent gave is never changed, a tab already read is not asked about again, and the paths that leave your Mac are relative to the workspace. Settings → Helpers has the switch to turn it off."
+  },
+  {
     "version": "2.0.0",
     "title": "Clave 2.0: your agents in a chat, not only a terminal",
     "description": "Claude Code and Codex sessions can now open as a conversation: answers rendered as Markdown, tool calls as quiet rows, questions answered with a click, permissions above the composer, and files or screenshots dropped straight onto a message. The same session can also be read in the Terminal view, one readable turn per exchange. Pick the view from the pane header.\n\nAdd several Claude and Codex subscriptions in Settings → Connections. A tab switches to another account without losing its conversation, and a tab stopped by a usage limit comes back on the next account by itself. The Usage page shows them all as charts.\n\nPlugins can now bring their own agents, views and panels, starting with a GitHub side panel for pull request links. Skins, five density presets, a text size, a font choice and mouse-button bindings round it out. Your sessions, groups and settings carry over from 1.x."
