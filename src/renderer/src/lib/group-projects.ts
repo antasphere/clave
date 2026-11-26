@@ -29,8 +29,11 @@ import { clearGroupSuggestion, setGroupSuggestion } from '../store/group-suggest
 
 /** What one call answers: each tab's reading as its record now keeps it. */
 export interface TabProjectsAnswer {
-  tabs: ReadonlyArray<{ sessionId: string; projects: TabProjects | null }>
+  tabs: ReadonlyArray<{ sessionId: string; projects: TabProjects | null; reason?: string }>
 }
+
+/** The reasons a server gives when the decision cannot run on it at all. */
+const CANNOT_RUN = new Set(['no-key', 'disabled'])
 export type ReadTabProjects = (sessionIds: string[]) => Promise<TabProjectsAnswer>
 
 /** The most tabs one call may name (`READ_TAB_PROJECTS_MAX` of
@@ -77,6 +80,12 @@ export async function nameGroupFromTabs(
     generations.set(groupId, generation)
     const answer = await read(ids)
     if (generations.get(groupId) !== generation) return
+    // The server cannot decide (no Jev key, the decision switched off): its
+    // answer serves no reading, and the tabs keep what the window knew of
+    // them, as their records keep theirs; no group is named and nothing is
+    // offered, as before the decisions.
+    if (answer.tabs.some((tab) => !!tab.reason && CANNOT_RUN.has(tab.reason)))
+      return clearGroupSuggestion(groupId)
     const store = useSessionStore.getState()
     for (const tab of answer.tabs) store.applyServedProjects(tab.sessionId, tab.projects)
     applyGroupReading(groupId)

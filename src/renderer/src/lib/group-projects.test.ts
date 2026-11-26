@@ -165,6 +165,25 @@ describe('what a group does with its tabs’ readings', () => {
     expect(nearest[1].share).toBeCloseTo(0.15)
   })
 
+  it('a server that cannot decide: the tabs keep what they knew, nothing named, nothing offered', async () => {
+    const known = decided(['Atlas', 0.95])
+    useSessionStore.setState({
+      sessions: useSessionStore
+        .getState()
+        .sessions.map((s) => (s.id === 'a' ? { ...s, projects: known } : s))
+    })
+    useGroupSuggestionsStore.setState({ byGroup: { g: [{ name: 'Lumen', share: 0.5 }] } })
+    for (const reason of ['no-key', 'disabled']) {
+      const read: ReadTabProjects = async (ids) => ({
+        tabs: ids.map((sessionId) => ({ sessionId, projects: null, reason }))
+      })
+      await projects.nameGroupFromTabs('g', read)
+      expect(groupOf('g')).toMatchObject({ name: 'Group 1', autoNamed: true })
+      expect(useSessionStore.getState().sessions.find((s) => s.id === 'a')?.projects).toEqual(known)
+      expect(suggestionOf('g')).toBeUndefined()
+    }
+  })
+
   it('unread: nothing, and a suggestion it had goes', async () => {
     useGroupSuggestionsStore.setState({ byGroup: { g: [{ name: 'Lumen', share: 0.5 }] } })
     await projects.nameGroupFromTabs('g', reader({}))
