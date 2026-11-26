@@ -67,6 +67,19 @@ describe('the readers of the command’s answers', () => {
     expect(firstLine('x'.repeat(400))).toHaveLength(300)
   })
 
+  it('takes no « not found » looked for in another workspace for a deck that is gone', () => {
+    expect(
+      isGone({
+        code: 1,
+        stderr:
+          'Error: Not found (looked in the workspace "acme", selected by SLIDELESS_WORKSPACE)\n'
+      })
+    ).toBe(false)
+    expect(isGone({ code: 1, stderr: 'Error: Presentation not found\n' })).toBe(true)
+    for (const gone of ['Error: 404', 'Error: no such deck', 'Error: the deck was deleted'])
+      expect(isGone({ code: 1, stderr: gone })).toBe(true)
+  })
+
   it('say why a command failed by its `Error:` line, past a notice that it is older than its site', () => {
     const notice = 'This slideless (0.15.0) is older than https://decks.example.test (0.15.1).'
     expect(errorLine(`${notice}\nError: the key was refused\n`)).toBe('the key was refused')

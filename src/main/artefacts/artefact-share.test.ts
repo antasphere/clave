@@ -441,6 +441,28 @@ describe('making a link', () => {
     expect(await s.share.deck('s1', s.folder)).toEqual(recorded)
   })
 
+  it('answers a push refused in another workspace with its refusal, never deck_gone', async () => {
+    const elsewhere =
+      'Error: Not found (looked in the workspace "acme", selected by SLIDELESS_WORKSPACE)\n'
+    let refuse = false
+    const s = setup({
+      override: (args, child) => {
+        if (!refuse || !args.includes('push')) return false
+        answer('', 1, elsewhere)(child)
+        return true
+      }
+    })
+    await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
+    const recorded = await s.share.deck('s1', s.folder)
+    refuse = true
+    expect(
+      await refusal(s.share.share({ sessionId: 's1', target: s.folder, link: defaults }))
+    ).toBe(
+      'ArtefactRefusal: Slideless did not push the page: Not found (looked in the workspace "acme", selected by SLIDELESS_WORKSPACE)'
+    )
+    expect(await s.share.deck('s1', s.folder)).toEqual(recorded)
+  })
+
   it('says why the push failed, in the command’s words', async () => {
     const s = setup({
       override: (args, child) => {
@@ -609,6 +631,27 @@ describe('revoking a link', () => {
       'ArtefactRefusal: Slideless did not revoke the link: the site is not reachable'
     )
     expect((await s.share.deck('s1', s.folder)).links).toHaveLength(1)
+  })
+
+  it('keeps a link whose revocation was not found in another workspace, and says why', async () => {
+    let refuse = false
+    const s = setup({
+      override: (args, child) => {
+        if (!refuse || !args.includes('unshare')) return false
+        answer(
+          '',
+          1,
+          'Error: Not found (looked in the workspace "acme", selected by SLIDELESS_WORKSPACE)\n'
+        )(child)
+        return true
+      }
+    })
+    await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
+    refuse = true
+    expect(await refusal(s.share.revoke('s1', s.folder, 't1'))).toBe(
+      'ArtefactRefusal: Slideless did not revoke the link: Not found (looked in the workspace "acme", selected by SLIDELESS_WORKSPACE)'
+    )
+    expect((await s.share.deck('s1', s.folder)).links.map((link) => link.tokenId)).toEqual(['t1'])
   })
 
   it('lets go of a link the site no longer has: revoked on Slideless, or its deck deleted', async () => {
