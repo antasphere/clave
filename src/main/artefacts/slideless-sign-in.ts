@@ -81,9 +81,10 @@ interface Flight {
   waiter: ((signIn: SlidelessSignIn) => void) | null
   /** The answer's own promise, which a second answer joins rather than writing again. */
   answering: Promise<SlidelessSignIn> | null
+  /** The question's minute, then the answer's two. */
   timer: ReturnType<typeof setTimeout> | null
+  /** The ten minutes a command lives. */
   life: ReturnType<typeof setTimeout> | null
-  ended: SlidelessSignIn | null
 }
 
 /** The question the command asks now: its last line, unended, ending like a prompt. */
@@ -124,8 +125,7 @@ export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
     if (flight.life) clearTimeout(flight.life)
     flight.timer = flight.life = null
     if (!flight.exited) flight.child.kill('SIGKILL')
-    flight.ended = signInOf(flight, phase, message)
-    tell(flight, flight.ended)
+    tell(flight, signInOf(flight, phase, message))
     endedIds.push(flight.id)
     while (endedIds.length > ENDED_KEPT) flights.delete(endedIds.shift()!)
   }
@@ -204,8 +204,7 @@ export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
         waiter: null,
         answering: null,
         timer: null,
-        life: null,
-        ended: null
+        life: null
       }
       flights.set(flight.id, flight)
       const asked = new Promise<SlidelessSignIn>((resolve) => {
