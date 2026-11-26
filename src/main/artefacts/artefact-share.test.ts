@@ -453,6 +453,32 @@ describe('making a link', () => {
     expect(await s.share.deck('s1', s.folder)).toEqual(recorded)
   })
 
+  it('answers a recorded deck’s push refused for another reason with the refusal, never deck_gone', async () => {
+    const stale =
+      'Error: The key of profile "decks" was refused by https://decks.example.test: it is stale, sign in again.\n'
+    let refuse = false
+    const s = setup({
+      override: (args, child) => {
+        if (!refuse || !args.includes('push')) return false
+        answer('', 1, stale)(child)
+        return true
+      }
+    })
+    await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
+    const recorded = await s.share.deck('s1', s.folder)
+    refuse = true
+    expect(
+      await refusal(s.share.share({ sessionId: 's1', target: s.folder, link: defaults }))
+    ).toBe(
+      'ArtefactRefusal: Slideless did not push the page: The key of profile "decks" was refused by https://decks.example.test: it is stale, sign in again.'
+    )
+    // The push went to the recorded deck, and nothing after it: no link, the record as it was.
+    const pushes = s.commands().filter((call) => call.args.includes('push'))
+    expect(pushes.at(-1)!.args.slice(-2)).toEqual(['--id', 'd1'])
+    expect(s.commands().filter((call) => call.args.includes('share'))).toHaveLength(1)
+    expect(await s.share.deck('s1', s.folder)).toEqual(recorded)
+  })
+
   it('answers a push refused in another workspace with its refusal, never deck_gone', async () => {
     const elsewhere =
       'Error: Not found (looked in the workspace "acme", selected by SLIDELESS_WORKSPACE)\n'
