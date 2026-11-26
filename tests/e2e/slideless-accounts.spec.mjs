@@ -766,6 +766,11 @@ export async function run(t) {
         pagePushes.every((call) => has(call, '--new')),
       pushedPaths
     )
+    t.check(
+      '7. a page with no deck goes where « New links go to » says now: the cloud, not the first site',
+      pagePushes.length === 2 && pagePushes.every((call) => optionOf(call, '--api-url') === CLOUD),
+      pagePushes.map((call) => call.argv)
+    )
     const pageDecks = journal(beforePages)
       .filter((call) => has(call, 'share'))
       .map((call) => after(call, 'share'))
