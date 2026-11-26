@@ -62,6 +62,17 @@ export interface DecksStorage extends LinksStorage {
 export const recordUnreadable = (file: string, reason: string): string =>
   `Clave's record of the shared pages (${file}) could not be read: ${reason.replace(/[.\s]+$/, '')}. Nothing was changed.`
 
+/** Why the record could not be read, in the error's words: an OS error by its
+ *  code and message (`EACCES: permission denied`), never the path the
+ *  sentence names already; any other error by its message. */
+export function reasonOf(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  const { code, syscall, path } = error as NodeJS.ErrnoException
+  if (typeof code !== 'string' || typeof path !== 'string') return error.message
+  const at = typeof syscall === 'string' ? error.message.indexOf(`, ${syscall} '${path}'`) : -1
+  return at > 0 ? error.message.slice(0, at) : code
+}
+
 /** The decks record as a file, owner-only, written through a rename as the
  *  links document is (`fileLinksStorage`); unlike it, only a missing file
  *  reads as none: any other failure to read it is thrown. */
@@ -218,7 +229,7 @@ export class ArtefactDecks {
       if (text === null) return { decks: {}, kept: {} }
       parsed = JSON.parse(text)
     } catch (error) {
-      throw this.unreadable(error instanceof Error ? error.message : String(error))
+      throw this.unreadable(reasonOf(error))
     }
     const document = parsed as { v?: unknown; decks?: unknown } | null
     if (

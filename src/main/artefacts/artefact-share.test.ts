@@ -834,10 +834,7 @@ describe('a record of the decks that cannot be read', () => {
     await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
     const before = readFileSync(s.decksFile)
     const ran = s.slideless.calls.length
-    const sentence = `ArtefactRefusal: ${recordUnreadable(
-      s.decksFile,
-      `EACCES: permission denied, open '${s.decksFile}'`
-    )}`
+    const sentence = `ArtefactRefusal: ${recordUnreadable(s.decksFile, 'EACCES: permission denied')}`
     chmodSync(s.decksFile, 0o000)
     try {
       for (const call of [

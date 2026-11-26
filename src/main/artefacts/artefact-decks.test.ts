@@ -18,6 +18,7 @@ import {
   fileDecksStorage,
   MAX_DECKS,
   MAX_LINKS_PER_DECK,
+  reasonOf,
   recordUnreadable,
   type DeckPush,
   type DecksStorage
@@ -198,6 +199,15 @@ describe('a record file that cannot be read', () => {
     const before = readFileSync(file)
     chmodSync(file, 0o000)
     try {
+      // The file named once: the OS error by its code and its words, never its path again.
+      let said = ''
+      try {
+        decks.get('/work/a')
+      } catch (error) {
+        said = (error as Error).message
+      }
+      expect(said).toBe(recordUnreadable(file, 'EACCES: permission denied'))
+      expect(said.split(file)).toHaveLength(2)
       expect(() => decks.get('/work/a')).toThrow(unreadable(file))
       expect(() => decks.pushed('/work/c', push(3))).toThrow(unreadable(file))
       expect(() => decks.addLink('/work/a', link(2))).toThrow(unreadable(file))
@@ -223,6 +233,23 @@ describe('a record file that cannot be read', () => {
     expect(() => decks.removeLink('/work/a', 't1')).toThrow(unreadable(file))
     expect(readFileSync(file).equals(before)).toBe(true)
     expect(readdirSync(join(file, '..'))).toEqual(['artefact-decks.json'])
+  })
+
+  it('says an OS error by its code and its words, never the path the sentence already names', () => {
+    const denied = Object.assign(
+      new Error("EACCES: permission denied, open '/srv/clave-data/artefact-decks.json'"),
+      { code: 'EACCES', syscall: 'open', path: '/srv/clave-data/artefact-decks.json' }
+    )
+    expect(reasonOf(denied)).toBe('EACCES: permission denied')
+    // An OS error whose words do not end on its call and path: its code alone, never the path.
+    const bare = Object.assign(new Error('EISDIR /srv/clave-data/artefact-decks.json'), {
+      code: 'EISDIR',
+      path: '/srv/clave-data/artefact-decks.json'
+    })
+    expect(reasonOf(bare)).toBe('EISDIR')
+    expect(reasonOf(new SyntaxError('Unexpected end of JSON input'))).toBe(
+      'Unexpected end of JSON input'
+    )
   })
 
   it('refuses a version 1 record whose decks are no map, on a read and on a write, the file as it was', () => {
