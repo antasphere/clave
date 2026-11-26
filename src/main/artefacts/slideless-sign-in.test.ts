@@ -320,6 +320,28 @@ describe('answering a sign-in', () => {
     for (const spy of said) expect(spy).not.toHaveBeenCalled()
   })
 
+  it('never says the code back, when the command echoes it in its refusal or in why it stopped', async () => {
+    const { signIns, call, started } = await asked()
+    const answering = signIns.answer('sign-in-1', CODE)
+    call.child.say(`Error: the code ${CODE} is not valid or has expired\n`)
+    call.child.exit(1)
+    const failed = await answering
+    expect(failed).toMatchObject({
+      phase: 'failed',
+      message: 'the code [hidden] is not valid or has expired'
+    })
+    expect(JSON.stringify(failed)).not.toContain(CODE)
+    // A command that fails to run on while the code is in play: its reason without it too.
+    const second = signIns.start(LOCAL, { email: 'someone@example.test' })
+    await flush()
+    const local = started()[1]!
+    local.child.say('Code: ')
+    await second
+    const stopped = signIns.answer('sign-in-2', CODE)
+    local.child.emit('error', new Error(`write EPIPE after ${CODE}`))
+    expect(await stopped).toMatchObject({ phase: 'failed', message: 'write EPIPE after [hidden]' })
+  })
+
   it('answers an unknown or finished sign-in that it is over', async () => {
     const { signIns, call } = await asked()
     expect(await signIns.answer('nobody', CODE)).toEqual({

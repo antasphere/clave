@@ -13,8 +13,10 @@
  * `email_code`, `pick_hub`, `pick_login`), run as the listing wrote it after
  * the global options. One sign-in runs per site: a second start lets go of
  * the first. Every command is killed after ten minutes, and when the service
- * stops. The code is written once, never logged, never put in a sentence,
- * and kept nowhere once written.
+ * stops. The code is written once and never logged; the sign-in holds it only
+ * while its answer is awaited, so that every sentence it ends with is said
+ * without it (`withoutSecret`), should the command repeat it, and lets go of
+ * it at its end.
  */
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -22,6 +24,7 @@ import type { SlidelessAccounts, SlidelessSignIn } from '@clave/contract/artefac
 import { ArtefactRefusal } from './refusal'
 import { fixArgs, notASite, profileAt, SIGN_IN_KINDS } from './slideless-accounts'
 import { errorLine } from './slideless-json'
+import { withoutSecret } from './slideless-run'
 import { normalOrigin } from './slideless-settings'
 
 /** How long a start waits for the command's question. */
@@ -87,6 +90,8 @@ interface Flight {
   said: string
   /** What it said once the code was written. */
   saidAfter: string
+  /** The code given, held only while its answer is awaited: taken out of every sentence the sign-in ends with. */
+  given: string | null
   exited: boolean
   /** The call that waits: the start until the code is asked, then the answer. */
   waiter: ((signIn: SlidelessSignIn) => void) | null
@@ -136,7 +141,11 @@ export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
     if (flight.life) clearTimeout(flight.life)
     flight.timer = flight.life = null
     if (!flight.exited) flight.child.kill('SIGKILL')
-    tell(flight, signInOf(flight, phase, message))
+    // Every sentence built while a code is in play (the command's error line,
+    // the reason it could not run) is said without it; then the code goes.
+    const said = message === null ? null : withoutSecret(message, flight.given ?? undefined)
+    flight.given = null
+    tell(flight, signInOf(flight, phase, said))
     endedIds.push(flight.id)
     while (endedIds.length > ENDED_KEPT) flights.delete(endedIds.shift()!)
   }
@@ -217,6 +226,7 @@ export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
         stage: 'asking',
         said: '',
         saidAfter: '',
+        given: null,
         exited: false,
         waiter: null,
         answering: null,
@@ -249,8 +259,10 @@ export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
         flight.waiter = resolve
       })
       flight.timer = setTimeout(() => end(flight, 'failed', NO_END), ANSWER_TIMEOUT_MS)
-      // Written once with its newline, and the input closed. Nothing here holds
-      // the code after this line: no closure, no field, no sentence.
+      // Held on the flight until the sign-in ends, only to take it out of what
+      // it ends with; no closure keeps it and no sentence carries it.
+      flight.given = code
+      // Written once with its newline, and the input closed.
       flight.child.stdin?.end(`${code}\n`)
       return flight.answering
     },
