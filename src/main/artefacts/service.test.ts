@@ -845,6 +845,26 @@ describe('Clave’s own copy older than the accounts need', () => {
     expect(states).toEqual([])
   })
 
+  it('installs a copy gone after start at the next artefact opened, asking the registry once', async () => {
+    const { deck, dataWith, built } = world()
+    const registry = fixtureRegistry('0.15.0')
+    registry.open()
+    const dataDir = dataWith('data', '0.15.0')
+    const { service } = built(dataDir, {}, registry)
+    service.start()
+    await settle(100)
+    expect(registry.asked()).toEqual({ latest: 0, tarball: 0 })
+    // The copy goes after start (its folder removed): the next open installs one.
+    rmSync(join(dataDir, 'slideless', 'cli'), { recursive: true, force: true })
+    expect((await service.slidelessState()).phase).toBe('missing')
+    await service.open('s1', deck)
+    await expect
+      .poll(async () => (await service.slidelessState()).phase, { timeout: 5_000 })
+      .toBe('ready')
+    expect(registry.asked()).toEqual({ latest: 1, tarball: 1 })
+    expect(await service.slidelessState()).toMatchObject({ phase: 'ready', version: '0.15.0' })
+  })
+
   it('is updated from the registry at start, once a run, and never on the override', async () => {
     const { root, deck, dataWith, built } = world()
     const registry = fixtureRegistry('0.15.0')
