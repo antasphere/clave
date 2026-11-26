@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import type { SessionRecord } from '@clave/contract/sessions'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { forkRunner } from './fork-runner'
+import { pluginSlideless } from './plugin-host'
 import { createPluginService, refusingPluginService, type PluginService } from './plugin-service'
 
 export interface StandalonePluginsOptions {
@@ -23,6 +24,10 @@ export interface StandalonePluginsOptions {
   readonly bundled: string
   /** The host's version, the one a manifest's `engines.clave` is judged against. */
   readonly version: string
+  /** The Node this server runs its own copy of Slideless with, the one its
+   *  artefact service gets (`--node`, else its own binary): told to every
+   *  plugin with where that copy is under `dataDir` (PRDCT-4499). */
+  readonly node: string
   /** The session records, for what a plugin learns of a session. */
   readonly records?: () => ReadonlyArray<SessionRecord>
 }
@@ -42,7 +47,8 @@ export function standalonePlugins(options: StandalonePluginsOptions): PluginServ
       bundled: options.bundled,
       version: options.version,
       spawner: forkRunner({ runner: standaloneRunnerPath() }),
-      ...(options.records && { records: options.records })
+      ...(options.records && { records: options.records }),
+      slideless: pluginSlideless(options.dataDir, options.node)
     })
   } catch (error) {
     // The shell's own degradation (`shell-plugins.ts`): a registry that cannot

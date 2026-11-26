@@ -31,7 +31,7 @@ import { type Session, SessionInputSchema } from '../../shared/session-model'
 import { syncPluginAdapters } from '../sessions/plugin-adapters'
 import { pluginSessionOf } from '../sessions/plugin-sessions'
 import { type SessionManager, sessionManager } from '../sessions/session-manager'
-import { PluginHost, type RunnerSpawner } from './plugin-host'
+import { PluginHost, type PluginSlideless, type RunnerSpawner } from './plugin-host'
 import { PluginStore, pluginFile, type PluginRecord } from './plugin-store'
 
 export interface PluginNotice {
@@ -60,6 +60,10 @@ export interface PluginServiceOptions {
    *  registry (its provider session id, model, workspace). A host with no records
    *  throws (`CapabilityUnavailable`), read as none. */
   readonly records?: () => ReadonlyArray<SessionRecord>
+  /** Where this server's own copy of Slideless is, told to every plugin process
+   *  (PRDCT-4499: the Analytics viewer runs it); the host writes its preview
+   *  host before a plugin starts. */
+  readonly slideless?: PluginSlideless
 }
 
 export interface PluginService extends PluginsService {
@@ -220,7 +224,8 @@ export function createPluginService(options: PluginServiceOptions): PluginServic
         })
       }
     },
-    options.spawner
+    options.spawner,
+    options.slideless
   )
   // A session that is gone takes its leases with it: nothing is left holding
   // authority over an id the manager no longer knows. Released with the

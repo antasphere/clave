@@ -433,10 +433,15 @@ async function main(): Promise<void> {
   // default), each plugin's `main` in a process forked under Node IPC. Built
   // AFTER the session host: a plugin's adapters register with this process's
   // session manager, so a session this server starts can run them.
+  // The Node this server runs its own copy of Slideless with (`--node`, as the
+  // terminal process gets it, else its own binary): the artefacts', the
+  // routines' and the plugins' alike (PRDCT-4472, PRDCT-4499).
+  const slidelessNode = arg('node') ?? process.execPath
   const plugins = standalonePlugins({
     dataDir,
     bundled: arg('plugins-bundled') ?? path.resolve(__dirname, '..', '..', 'plugins'),
     version,
+    node: slidelessNode,
     records: () => sessions.listAdoptableRecords()
   })
   installE2eHooks({ plugins })
@@ -544,7 +549,7 @@ async function main(): Promise<void> {
   const recordOf = sessionLaunchOf(ptyManager)
   const artefacts = createArtefactService({
     dataDir,
-    execPath: arg('node') ?? process.execPath,
+    execPath: slidelessNode,
     env: process.env,
     links: new ArtefactLinks(fileLinksStorage(path.join(dataDir, 'artefacts.json')), (line) =>
       log(line)

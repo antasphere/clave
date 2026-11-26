@@ -1,5 +1,5 @@
 import { mkdirSync, watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   assertMethodPermission,
   type PluginActionPreviewRow,
@@ -8,7 +8,50 @@ import {
   type RPCMessage,
   type PluginSession
 } from '@clave/plugin-sdk'
+import { previewHostPath, writePreviewHost } from '../artefacts/preview-host'
+import { CLI_OVERRIDE_ENV } from '../artefacts/slideless-cli'
 import { pluginFile, PluginStore, type PluginRecord } from './plugin-store'
+
+/** Where the server's own copy of Slideless is, for a plugin that runs it (the
+ *  Analytics viewer, PRDCT-4499): never a `slideless` found on a path. */
+export interface PluginSlideless {
+  /** The Node that runs the copy: the server process's own binary, or the one its entry was told. */
+  readonly node: string
+  /** The preview host the copy runs under (`previewHostPath` of the server's data folder). */
+  readonly host: string
+  /** The folder the server installs its copy in (`<data folder>/slideless/cli`). */
+  readonly cliDir: string
+}
+
+/** The variables a plugin process is told them in. The Analytics plugin names
+ *  them again (`plugins/analytics/src/slideless-command.ts`): it imports nothing of the app. */
+export const SLIDELESS_NODE_ENV = 'CLAVE_SLIDELESS_NODE'
+export const SLIDELESS_HOST_ENV = 'CLAVE_SLIDELESS_HOST'
+export const SLIDELESS_CLI_DIR_ENV = 'CLAVE_SLIDELESS_CLI_DIR'
+
+/** A server's own copy under its data folder, as its artefact service installs and runs it. */
+export const pluginSlideless = (dataDir: string, node: string): PluginSlideless => ({
+  node,
+  host: previewHostPath(dataDir),
+  cliDir: join(dataDir, 'slideless', 'cli')
+})
+
+/** The preview host written where `slideless.host` names it, before a plugin
+ *  that may run it starts; a failure is said and the plugin starts all the
+ *  same (its viewer then finds no host, and says Slideless is missing). */
+function writeSlidelessHost(slideless: PluginSlideless): void {
+  // `writePreviewHost` takes the data folder; the host's path is `<folder>/slideless/preview-host.mjs`.
+  const dataDir = dirname(dirname(slideless.host))
+  if (previewHostPath(dataDir) !== slideless.host) {
+    console.error(`[plugins] ${slideless.host} is not where a preview host is written; not written`)
+    return
+  }
+  try {
+    writePreviewHost(dataDir)
+  } catch (error) {
+    console.error(`[plugins] the Slideless preview host could not be written: ${String(error)}`)
+  }
+}
 
 /** The process a plugin's `main` runs in, as the host sees it: one per start,
  *  a JSON-RPC channel in and out, an exit, and a kill. Electron main spawns it
@@ -73,7 +116,9 @@ export class PluginHost {
   constructor(
     readonly store: PluginStore,
     private services: PluginServices,
-    private spawner: RunnerSpawner
+    private spawner: RunnerSpawner,
+    /** Where the server's own copy of Slideless is; absent, a plugin is told nothing of it. */
+    private slideless?: PluginSlideless
   ) {
     this.poll = setInterval(() => {
       this.publishSessions()
@@ -119,6 +164,16 @@ export class PluginHost {
       const dataDir = join(this.store.root, 'data', id)
       mkdirSync(dataDir, { recursive: true })
       env.CLAVE_PLUGIN_DATA_DIR = dataDir
+      // Where the server's own copy of Slideless is (PRDCT-4499), its host
+      // written first; the override only when the host's own environment sets it.
+      if (this.slideless) {
+        writeSlidelessHost(this.slideless)
+        env[SLIDELESS_NODE_ENV] = this.slideless.node
+        env[SLIDELESS_HOST_ENV] = this.slideless.host
+        env[SLIDELESS_CLI_DIR_ENV] = this.slideless.cliDir
+        const override = process.env[CLI_OVERRIDE_ENV]
+        if (override) env[CLI_OVERRIDE_ENV] = override
+      }
       const child = this.spawner({ id, main, cwd: record.directory, env })
       const running: RunningPlugin = {
         process: child,

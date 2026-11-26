@@ -26,10 +26,17 @@ describe('the standalone server’s plugins', () => {
     const service = standalonePlugins({
       dataDir: temporary,
       bundled: join(temporary, 'bundled'),
-      version: '1.90.2'
+      version: '1.90.2',
+      node: '/opt/clave/node'
     })
     expect(service.list()).toEqual([])
     expect(service.store.root).toBe(join(temporary, 'clave-plugins'))
+    // Its plugins are told the copy its artefact service installs under the same folder (PRDCT-4499).
+    expect(service.host['slideless']).toEqual({
+      node: '/opt/clave/node',
+      host: join(temporary, 'slideless', 'preview-host.mjs'),
+      cliDir: join(temporary, 'slideless', 'cli')
+    })
     service.close()
   })
   it('refuses every call with the sentence when installed.json cannot be read, instead of dying', () => {
@@ -41,7 +48,8 @@ describe('the standalone server’s plugins', () => {
     const service = standalonePlugins({
       dataDir: temporary,
       bundled: join(temporary, 'bundled'),
-      version: '1.90.2'
+      version: '1.90.2',
+      node: '/opt/clave/node'
     })
     expect(() => service.list()).toThrow(/^Plugin registry could not be read: /)
     expect(() => service.leaseView('x', 'v', 's')).toThrow('Plugin registry could not be read')
