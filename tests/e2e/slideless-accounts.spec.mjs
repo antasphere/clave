@@ -16,9 +16,11 @@
 // two decks, pushed from two copies the server stages; a password and a
 // pinned version reach the link; a link is revoked by its token; a deck gone
 // from its site is made anew on the site chosen. A dead loopback site is
-// removed. Last, a folder whose link file names a site of no profile here is
+// removed. A folder whose link file names a site of no profile here is
 // refused before anything is pushed: Clave never signs in at a site only a
-// link file names. Every site, address and key is invented.
+// link file names. Last, with « New links go to » not chosen, the dialog says
+// why it offers the first site, until the person picks one. Every site,
+// address and key is invented.
 import { createHash } from 'node:crypto'
 import {
   chmodSync,
@@ -261,8 +263,11 @@ export async function run(t) {
   const ONE = `${PAGES}/one.html`
   const TWO = `${PAGES}/two.html`
   const LINKED = `${ROOT}/clave-e2e-linked`
+  const FRESH = `${ROOT}/clave-e2e-fresh`
   for (const folder of [ROOT, STUB_DIR]) rmSync(folder, { recursive: true, force: true })
-  for (const folder of [DECK, PAGES, LINKED, STUB_DIR]) mkdirSync(folder, { recursive: true })
+  for (const folder of [DECK, PAGES, LINKED, FRESH, STUB_DIR])
+    mkdirSync(folder, { recursive: true })
+  writeFileSync(`${FRESH}/index.html`, '<!doctype html><h1>no deck yet</h1>')
   writeFileSync(`${DECK}/index.html`, '<!doctype html><h1 id="t">first draft</h1>')
   writeFileSync(ONE, '<!doctype html><h1>one</h1>')
   writeFileSync(TWO, '<!doctype html><h1>two</h1>')
@@ -479,6 +484,22 @@ export async function run(t) {
         ),
       await text(row(LOCAL))
     )
+    // The add answers the plain listing: the page then checks every sign-in, as Refresh does.
+    t.check(
+      '2. … then the page checks every sign-in again (profiles --check), as Refresh does',
+      !!(await until(() => journal(beforeAdd).some((call) => has(call, 'profiles', '--check')))),
+      journal(beforeAdd).map((call) => call.argv)
+    )
+    t.check(
+      '2. … and every row keeps its check line',
+      !!(await until(
+        async () =>
+          (await text(line(DECKS, 'check'))) === 'Answers as Some One' &&
+          (await text(line(LOCAL, 'check'))) === 'No key to check',
+        150
+      )),
+      { decks: await text(line(DECKS, 'check')), local: await text(line(LOCAL, 'check')) }
+    )
 
     // ── 3. New links go to ──
     const newLinks = page.locator('[data-settings-select="slideless-new-links"]')
@@ -677,6 +698,11 @@ export async function run(t) {
       '6. Create link shows the link',
       /^https:\/\/decks\.example\.test\/s\/tok-\d+$/.test(first?.url ?? ''),
       first
+    )
+    t.equal(
+      '6. once a link is made, the primary reads « Create another link »',
+      await text(dialog.locator('[data-create-link-submit]')),
+      'Create another link'
     )
     const firstToken = (first?.url ?? '').split('/s/')[1]
     const firstPushes = journal(beforeFirst).filter((call) => has(call, 'push'))
@@ -959,6 +985,39 @@ export async function run(t) {
       '12. nothing was pushed: the journal holds no push',
       journal(beforeLinked).every((call) => !has(call, 'push')),
       journal(beforeLinked).map((call) => call.argv)
+    )
+    await closeDialog()
+
+    // ── 13. « New links go to » not chosen: the dialog says why it offers the first site ──
+    // Settings offers no « Not chosen » once a site is chosen: the setting is cleared on the server.
+    t.check(
+      '13. « New links go to » cleared on the server',
+      (await win.evaluate(() => window.electronAPI.artefacts.setNewLinksSite(null)))
+        .newLinksSite === null
+    )
+    t.check(
+      '13. the agent opens a page with no deck yet',
+      !toolErrored(await client.call('clave_open_artefact', { path: FRESH }))
+    )
+    await openDialog('clave-e2e-fresh')
+    const firstSite = dialog.locator('[data-create-link-first-site]')
+    t.check(
+      '13. « New links go to » not chosen: the first site is offered, and a line under it says why',
+      !!(await until(
+        async () =>
+          (await text(firstSite)) ===
+          '« New links go to » is not chosen in Settings › Slideless: the first site is offered.'
+      )) && (await siteSelect.getAttribute('data-value')) === DECKS,
+      { line: await text(firstSite), site: await siteSelect.getAttribute('data-value') }
+    )
+    await pick(win, siteSelect, 'Cloud')
+    t.check(
+      '13. once the person picks a site, the line goes',
+      !!(await until(
+        async () =>
+          (await siteSelect.getAttribute('data-value')) === CLOUD && (await firstSite.count()) === 0
+      )),
+      { line: await text(firstSite), site: await siteSelect.getAttribute('data-value') }
     )
     await closeDialog()
 
