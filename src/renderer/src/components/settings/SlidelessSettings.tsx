@@ -58,7 +58,9 @@ import {
  * offers: a sign-in with an e-mail code, a key to paste, a check, a removal.
  * A sign-in code and a key live in the form that asks for them and nowhere
  * else: cleared once given, gone with the form. Every call answers the
- * listing again, and the newest answer asked is the one on screen.
+ * listing again, and the newest answer asked is the one on screen. A copy too
+ * old for the accounts is one Clave updates by itself: while it installs, the
+ * page says so in place of « Install latest », then reads the accounts again.
  */
 
 const api = (): Window['electronAPI']['artefacts'] => window.electronAPI.artefacts
@@ -67,6 +69,8 @@ const serverIdOf = (machine: string): string | undefined =>
   machine === LOCAL_SERVER_ID ? undefined : machine
 /** The select's entry for « New links go to » when none is named. */
 const NOT_CHOSEN = '__not-chosen__'
+/** The page's one line while Clave updates a copy too old for the accounts. */
+const UPDATING = 'Clave is updating its Slideless to the latest release…'
 
 interface AccountsView {
   readonly machine: string
@@ -265,12 +269,24 @@ function InstallLatest({
 }
 
 function AccountsBody({ view }: { view: AccountsView }): ReactElement {
-  const { accounts, failure, machine } = view
+  const { accounts, failure, machine, reload } = view
   // The machine's Slideless, as Software Update reads it: an override is not Clave's to update.
   useEffect(() => {
     initArtefacts()
     useArtefactStore.getState().readSlideless(machine)
   }, [machine])
+  // A copy too old for the accounts is updated by Clave itself (PRDCT-4266):
+  // while it installs, the page says so in place of « Install latest », and
+  // once the install is over the accounts are read again, as on open.
+  const phase = useArtefactStore((s) => s.slideless[machine]?.phase)
+  const updating = phase === 'installing' && accounts?.needsUpdate === true
+  const unlisted = !!accounts?.error
+  const lastPhase = useRef(phase)
+  useEffect(() => {
+    const before = lastPhase.current
+    lastPhase.current = phase
+    if (before === 'installing' && phase !== 'installing' && unlisted) void reload()
+  }, [phase, unlisted, reload])
   const heading = accounts?.machine
     ? `Accounts on ${accounts.machine}${accounts.cliVersion ? ` · Slideless ${accounts.cliVersion}` : ''}`
     : accounts || failure
@@ -295,15 +311,18 @@ function AccountsBody({ view }: { view: AccountsView }): ReactElement {
           }
         />
       )}
-      {accounts?.error && (
-        <SettingsCallout
-          tone="danger"
-          role="alert"
-          text={accounts.error}
-          actions={accounts.needsUpdate ? <InstallLatest view={view} /> : undefined}
-          className="slideless-listing-error"
-        />
-      )}
+      {accounts?.error &&
+        (updating ? (
+          <SettingsCallout role="status" text={UPDATING} className="slideless-updating" />
+        ) : (
+          <SettingsCallout
+            tone="danger"
+            role="alert"
+            text={accounts.error}
+            actions={accounts.needsUpdate ? <InstallLatest view={view} /> : undefined}
+            className="slideless-listing-error"
+          />
+        ))}
       {accounts && accounts.error === null && (
         <>
           <NewLinksSection view={view} accounts={accounts} />

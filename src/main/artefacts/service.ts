@@ -66,6 +66,7 @@ import {
   describeState,
   installSlideless,
   resolveCli,
+  supportsAccounts,
   type ResolvedCli
 } from './slideless-cli'
 import { runSlideless, startSlideless, type SlidelessRunDeps } from './slideless-run'
@@ -110,7 +111,8 @@ export interface ArtefactDeps {
     readonly knows: (sessionId: string) => boolean
     readonly onState: (listener: (sessionId: string, state: AgentState) => void) => () => void
   }
-  /** Install Slideless in the background when it is missing (off under test mode with no fixture registry). */
+  /** Install Slideless in the background when it is missing, and once a run when Clave's own copy
+   *  is older than the accounts' floor (off under test mode with no fixture registry). */
   readonly autoInstall: boolean
   readonly spawn?: (command: string, args: string[], options: SpawnOptions) => ChildProcess
   readonly fetch?: typeof globalThis.fetch
@@ -208,11 +210,16 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   // ── Slideless, this server's own copy ──
   let installing: Promise<SlidelessState> | null = null
   let lastError: string | null = null
+  /** This run already installed the registry's latest, by itself or asked:
+   *  the update below the accounts' floor is not tried again, so a registry
+   *  still behind never loops. */
+  let latestTried = false
   const state = (): SlidelessState =>
     describeState(resolveCli(cliDir, deps.env), installing !== null, lastError)
 
   const install = (): Promise<SlidelessState> => {
     if (installing) return installing
+    latestTried = true
     lastError = null
     installing = installSlideless(cliDir, {
       fetch: fetchImpl,
@@ -234,8 +241,28 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     tell({ _tag: 'slideless.state_changed', state: state() })
     return installing
   }
-  const installWhenMissing = (): void => {
-    if (deps.autoInstall && state().phase === 'missing') void install()
+  /** Installs Slideless in the background when it is missing; and, once a
+   *  run, when Clave's own copy (never the override) is older than the
+   *  release the accounts and the links need (PRDCT-4266): the registry's
+   *  latest, installed as « Install latest » does, its integrity checked,
+   *  unless this run installed the latest already. The previews running on
+   *  the old copy keep running meanwhile. */
+  const installWhenNeeded = (): void => {
+    if (!deps.autoInstall) return
+    const now = state()
+    if (now.phase === 'missing') {
+      void install()
+      return
+    }
+    if (
+      now.phase !== 'ready' ||
+      now.override === true ||
+      now.version === null ||
+      supportsAccounts(now.version) ||
+      latestTried
+    )
+      return
+    void install()
   }
 
   // ── The previews and their holds ──
@@ -553,7 +580,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       tell({ _tag: 'artefact.changed', sessionId, artefact, artefacts: artefactsOf(sessionId) })
       // After the change, so the window that presents it already lists it.
       if (present === true) tell({ _tag: 'artefact.present_requested', sessionId })
-      installWhenMissing()
+      installWhenNeeded()
       return artefact
     },
     close: async (sessionId, target) => {
@@ -627,7 +654,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
         sweeper = setInterval(sweep, SWEEP_MS)
         sweeper.unref?.()
       }
-      installWhenMissing()
+      installWhenNeeded()
     },
     stop: async () => {
       stopStates?.()

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -11,6 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gzipSync } from 'node:zlib'
 import { ForwardRegistry } from '@clave/server/forward-registry'
 import type { ArtefactEvent } from '@clave/contract/artefacts'
 import type { AgentState } from '@clave/contract/sessions'
@@ -23,6 +25,7 @@ import {
   NO_SUCH_SESSION,
   NOT_ABSOLUTE,
   NOT_AN_ARTEFACT,
+  REGISTRY_ENV,
   SEVERAL_PAGES,
   createArtefactService,
   type ArtefactServiceHandle
@@ -696,6 +699,178 @@ describe('the links of sessions the server does not know yet', () => {
     expect(listed).toContain('s1')
     expect(listed).toContain('s2')
     expect(listed).not.toContain('gone-1')
+  })
+})
+
+/** A ustar archive of the files given, the way npm packs a package. */
+function tarOf(files: Record<string, string>): Buffer {
+  const blocks: Buffer[] = []
+  for (const [name, content] of Object.entries(files)) {
+    const data = Buffer.from(content)
+    const header = Buffer.alloc(512)
+    header.write(name, 0, 100, 'utf8')
+    header.write('0000644\0', 100)
+    header.write('0000000\0', 108)
+    header.write('0000000\0', 116)
+    header.write(data.length.toString(8).padStart(11, '0') + '\0', 124)
+    header.write('00000000000\0', 136)
+    header.write('0', 156)
+    header.write('ustar\0', 257)
+    header.write('00', 263)
+    header.fill(' ', 148, 156)
+    let sum = 0
+    for (const byte of header) sum += byte
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148)
+    blocks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512))
+  }
+  blocks.push(Buffer.alloc(1024))
+  return Buffer.concat(blocks)
+}
+
+const REGISTRY = 'https://registry.example.test'
+
+/** A registry offering one release of the package, its `latest` held until `open()`. */
+function fixtureRegistry(version: string): {
+  fetch: typeof globalThis.fetch
+  open: () => void
+  asked: () => { latest: number; tarball: number }
+} {
+  const tgz = gzipSync(
+    tarOf({
+      'package/package.json': JSON.stringify({ name: '@antasphere/slideless', version }),
+      'package/dist/bin.js': ''
+    })
+  )
+  const integrity = `sha512-${createHash('sha512').update(tgz).digest('base64')}`
+  const asked = { latest: 0, tarball: 0 }
+  let open = (): void => {}
+  const opened = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  const fetchImpl = (async (input: string | URL) => {
+    const url = String(input)
+    if (url === `${REGISTRY}/@antasphere%2fslideless/latest`) {
+      asked.latest++
+      await opened
+      return new Response(
+        JSON.stringify({ version, dist: { tarball: `${REGISTRY}/slideless.tgz`, integrity } }),
+        { status: 200 }
+      )
+    }
+    if (url === `${REGISTRY}/slideless.tgz`) {
+      asked.tarball++
+      return new Response(new Uint8Array(tgz), { status: 200 })
+    }
+    return new Response('nope', { status: 404 })
+  }) as typeof globalThis.fetch
+  return { fetch: fetchImpl, open: () => open(), asked: () => ({ ...asked }) }
+}
+
+/**
+ * Clave's own copy below the release the accounts and the links need
+ * (PRDCT-4266, the coordinator's ruling): the server installs the registry's
+ * latest by itself at start, once a run, and never in place of the override.
+ */
+describe('Clave’s own copy older than the accounts need', () => {
+  it('is updated from the registry at start, once a run, and never on the override', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'clave-artefact-floor-'))
+    dirs.push(root)
+    const deck = join(root, 'work', 'deck')
+    mkdirSync(deck, { recursive: true })
+    writeFileSync(join(deck, 'index.html'), '<h1>deck</h1>')
+    /** A data folder whose own copy of Slideless is `version`. */
+    const dataWith = (name: string, version: string): string => {
+      const cli = join(root, name, 'slideless', 'cli')
+      mkdirSync(join(cli, version), { recursive: true })
+      writeFileSync(join(cli, version, 'bin.js'), '')
+      writeFileSync(join(cli, version, 'package.json'), JSON.stringify({ version }))
+      writeFileSync(join(cli, 'current.json'), JSON.stringify({ version }))
+      return join(root, name)
+    }
+    const registry = fixtureRegistry('0.15.0')
+    const built = (
+      dataDir: string,
+      env: NodeJS.ProcessEnv,
+      offered = registry
+    ): { service: ArtefactServiceHandle; states: Array<[string, string | null]> } => {
+      const service = createArtefactService({
+        dataDir,
+        execPath: process.execPath,
+        env: { PATH: '/usr/bin:/bin', [REGISTRY_ENV]: REGISTRY, ...env },
+        links: new ArtefactLinks(memory(), () => {}),
+        forwards: new ForwardRegistry(),
+        sessions: { knows: (id) => id === 's1', onState: () => () => {} },
+        autoInstall: true,
+        fetch: offered.fetch,
+        log: () => {}
+      })
+      services.push(service)
+      const states: Array<[string, string | null]> = []
+      service.subscribe((event) => {
+        if (event._tag === 'slideless.state_changed')
+          states.push([event.state.phase, event.state.version])
+      })
+      return { service, states }
+    }
+
+    const dataDir = dataWith('data', '0.14.1')
+    const { service, states } = built(dataDir, {})
+    service.start()
+    expect(await service.slidelessState()).toMatchObject({ phase: 'installing' })
+    registry.open()
+    await expect
+      .poll(async () => (await service.slidelessState()).phase, { timeout: 5_000 })
+      .toBe('ready')
+    expect(await service.slidelessState()).toEqual({
+      phase: 'ready',
+      version: '0.15.0',
+      error: null,
+      override: false
+    })
+    expect(states).toEqual([
+      ['installing', null],
+      ['ready', '0.15.0']
+    ])
+    expect(registry.asked()).toEqual({ latest: 1, tarball: 1 })
+
+    // Once a run: the copy old again (a registry still behind), an open that
+    // would install a missing copy tries nothing more.
+    writeFileSync(
+      join(dataDir, 'slideless', 'cli', 'current.json'),
+      JSON.stringify({ version: '0.14.1' })
+    )
+    await service.open('s1', deck)
+    await settle(100)
+    expect(registry.asked()).toEqual({ latest: 1, tarball: 1 })
+    expect(await service.slidelessState()).toMatchObject({ phase: 'ready', version: '0.14.1' })
+
+    // A copy missing at start, installed from a registry still behind: that
+    // install was the run's one, and an open tries nothing more.
+    const behind = fixtureRegistry('0.14.1')
+    behind.open()
+    const fresh = built(join(root, 'data-missing'), {}, behind)
+    fresh.service.start()
+    await expect
+      .poll(async () => (await fresh.service.slidelessState()).phase, { timeout: 5_000 })
+      .toBe('ready')
+    await fresh.service.open('s1', deck)
+    await settle(100)
+    expect(behind.asked()).toEqual({ latest: 1, tarball: 1 })
+    expect(fresh.states).toEqual([
+      ['installing', null],
+      ['ready', '0.14.1']
+    ])
+
+    // Never on the override: the command it names is not Clave's to replace.
+    const override = join(root, 'override-bin.js')
+    writeFileSync(override, '')
+    const named = built(dataWith('data-override', '0.14.1'), { [CLI_OVERRIDE_ENV]: override })
+    named.service.start()
+    await named.service.open('s1', deck)
+    await settle(100)
+    expect(registry.asked()).toEqual({ latest: 1, tarball: 1 })
+    expect(await named.service.slidelessState()).toMatchObject({ phase: 'ready', override: true })
+    expect(named.states).toEqual([])
   })
 })
 
