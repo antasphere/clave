@@ -374,7 +374,8 @@ export async function run(t) {
       await shownName(win, g5.id)
     )
     t.equal('5. one request', asked() - before5, 1)
-    await win.locator(`[data-group-suggestions="${g5.id}"] .badge`).first().click()
+    // No chip to click is already red above: the roads after this one still run.
+    if (chips5) await win.locator(`[data-group-suggestions="${g5.id}"] .badge`).first().click()
     t.equal(
       '5. a click on the first names the group after it',
       await waitName(win, g5.id, 'Lumen'),
