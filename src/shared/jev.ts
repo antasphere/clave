@@ -40,6 +40,7 @@ export const JEV_REFUSED_PREFIX = 'TypeSafe refused the key: '
 
 /** What the Integrations card says before a key is pasted: what a key makes
  *  Clave send, and to whom. A decision reads only what its own row in
- *  Settings, Helpers says; this sentence covers them all. */
+ *  Settings, Helpers says; this sentence covers them all, the workspace's
+ *  projects included (every request carries them). */
 export const JEV_WHAT_LEAVES =
-  'With a key, Clave asks Jev, TypeSafe’s decision model, the small decisions listed in Helpers. Each one sends parts of a tab to TypeSafe: its first and latest messages and the folders its tools touched.'
+  'With a key, Clave asks Jev, TypeSafe’s decision model, the small decisions listed in Helpers. Each one sends TypeSafe parts of a tab, its first and latest messages and the folders its tools touched, with the name, the folder and the prompt of each project of the workspace.'

@@ -8,7 +8,7 @@ vi.mock('electron', () => {
 
 import { electronTestPorts, standaloneTestPorts } from '../ports/testing'
 import type { SettingsPorts } from '../ports/registry'
-import { JEV_REFUSED_PREFIX } from '../../shared/jev'
+import { JEV_REFUSED_PREFIX, JEV_WHAT_LEAVES } from '../../shared/jev'
 import { INTEGRATIONS_FILE } from './document'
 import {
   JevIntegration,
@@ -229,5 +229,15 @@ describe("TypeSafe's own words", () => {
     ).toBe('Field required')
     expect(jevDetailText('not json')).toBeNull()
     expect(jevDetailText('{}')).toBeNull()
+  })
+})
+
+describe('what the card says leaves', () => {
+  it('names the tab’s messages and folders, and every project of the workspace', () => {
+    // Every request carries the name, the folder and the prompt of each
+    // trusted project as the criteria: the card says so before a key is set.
+    expect(JEV_WHAT_LEAVES).toBe(
+      'With a key, Clave asks Jev, TypeSafe’s decision model, the small decisions listed in Helpers. Each one sends TypeSafe parts of a tab, its first and latest messages and the folders its tools touched, with the name, the folder and the prompt of each project of the workspace.'
+    )
   })
 })

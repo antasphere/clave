@@ -63,7 +63,7 @@ describe('the decisions preference', () => {
     expect(list).toContainEqual({
       id: 'tab-project',
       label: 'Tab project',
-      description: expect.stringContaining('first and latest messages'),
+      description: expect.stringContaining('the workspace’s projects'),
       enabled: true
     })
     expect(list).toContainEqual({

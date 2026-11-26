@@ -15,9 +15,11 @@
  *
  * Each road is proven by what the STUB RECEIVED and what the WINDOW SHOWS:
  *
- *  1. the key: a wrong one is refused in the stub's words; the good one is set
+ *  1. the key: the Jev section says what leaves, the workspace’s projects
+ *     with it; a wrong key is refused in the stub’s words; the good one is set
  *     and checked, with `/v1/models` asked under its bearer and no decision;
- *  2. the switch: Settings → Helpers lists « Tab project », on;
+ *  2. the switch: Settings → Helpers lists « Tab project », on, its row saying
+ *     what it sends;
  *  3. one project: two Quill tabs grouped by the keymap are « Group N » at
  *     once, then « Quill »; one request per tab, each body carrying the tab's
  *     own first message, no absolute path anywhere, relative folder keys and
@@ -200,6 +202,14 @@ export async function run(t) {
 
     // ── 1. The key ──
     let card = await openJevCard(win)
+    const sectionText = (await textOf(await openSettings(win, 'integrations'))) ?? ''
+    t.check(
+      '1. before a key, the Jev section says the workspace’s projects leave too',
+      sectionText.includes(
+        'with the name, the folder and the prompt of each project of the workspace'
+      ),
+      sectionText.slice(0, 600)
+    )
     await pasteJev(card, WRONG)
     const refusal = await until(() => cardLine(card, 'jev-check-error'))
     t.equal(
@@ -252,6 +262,11 @@ export async function run(t) {
       '2. Settings → Helpers lists « Tab project »',
       await textOf(decisionRow.locator('.settings-row-title')),
       'Tab project'
+    )
+    t.equal(
+      '2. its row says what it sends, the workspace’s projects with it',
+      await textOf(decisionRow.locator('.settings-row-description')),
+      'Which project a tab works on, to name the groups you make. Sends the tab’s first and latest messages, the folders its tools touched and the workspace’s projects.'
     )
     t.equal(
       '2. on',

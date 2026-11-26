@@ -215,7 +215,7 @@ export const tabProjectDecision = defineDecision<TabProjectInput, TabProjectOutc
   id: 'tab-project',
   label: 'Tab project',
   description:
-    'Which project a tab works on, to name the groups you make. Reads the tab’s first and latest messages and the folders its tools touched.',
+    'Which project a tab works on, to name the groups you make. Sends the tab’s first and latest messages, the folders its tools touched and the workspace’s projects.',
   model: JEV_MODEL,
   fallbackModel: JEV_FALLBACK_MODEL,
   timeoutMs: 8000,

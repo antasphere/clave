@@ -298,6 +298,10 @@ describe('the declaration', () => {
     expect(tabProjectDecision).toMatchObject({
       id: 'tab-project',
       label: 'Tab project',
+      // What its switch says leaves: the tab's words and folders, and the
+      // workspace's projects, which every request carries as the criteria.
+      description:
+        'Which project a tab works on, to name the groups you make. Sends the tab’s first and latest messages, the folders its tools touched and the workspace’s projects.',
       model: JEV_MODEL,
       fallbackModel: JEV_FALLBACK_MODEL,
       timeoutMs: 8000
