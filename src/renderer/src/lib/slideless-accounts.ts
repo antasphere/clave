@@ -64,10 +64,14 @@ export const siteLabel = (accounts: SlidelessAccounts | null, origin: string): s
   return profile ? profileTitle(profile) : hostOf(origin)
 }
 
-/** Who signs the site in, in one line; only what is known. */
+/** Who signs the site in, in one line; only what is known. « Not checked yet »
+ *  only before a check, for what the listing cannot tell until one (a state
+ *  unknown, keys it cannot count); after a check the row says how it signs in,
+ *  whatever the site answered, and a state still unknown signs nobody in. */
 export function signInLine(profile: SlidelessProfile): string {
-  const { state, via, email, hub, staleKeys } = profile.signIn
-  if (state === 'unknown' || staleKeys === null) return 'Not checked yet'
+  const { state, via, email, hub, staleKeys, checked } = profile.signIn
+  if (checked === undefined && (state === 'unknown' || staleKeys === null)) return 'Not checked yet'
+  if (state === 'unknown') return 'Not signed in'
   if (state === 'will_sign_in')
     return email
       ? `Signs in by itself at its first use, as ${email}`

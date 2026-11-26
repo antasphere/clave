@@ -143,12 +143,68 @@ describe('who signs a site in', () => {
     )
   })
 
-  it('says « Not checked yet » for an unknown state and for keys it cannot count, whatever else it says', () => {
+  it('says « Not checked yet » before a check, for an unknown state and for keys it cannot count, whatever else it says', () => {
     expect(signInLine(profile({ signIn: { state: 'unknown' } }))).toBe('Not checked yet')
     expect(signInLine(profile({ signIn: { staleKeys: null } }))).toBe('Not checked yet')
     expect(signInLine(profile({ signIn: { state: 'needs_login', staleKeys: null } }))).toBe(
       'Not checked yet'
     )
+  })
+
+  it('says how a site signs in once a check ran, whatever it answered, and an unknown state signs nobody in', () => {
+    // A profile holding its own key whose site did not answer: the listing's own shape.
+    const ownKeyUnreachable = profile({
+      hub: null,
+      siteCli: null,
+      signIn: {
+        state: 'signed_in',
+        via: 'key',
+        hub: null,
+        email: null,
+        staleKeys: null,
+        fix: { kind: 'check', argv: ['slideless', 'profiles', '--check'] },
+        checked: 'unreachable',
+        person: null
+      }
+    })
+    expect(signInLine(ownKeyUnreachable)).toBe('Signed in with its own key')
+    expect(
+      signInLine({
+        ...ownKeyUnreachable,
+        signIn: { ...ownKeyUnreachable.signIn, email: EMAIL }
+      })
+    ).toBe(`Signed in with its own key as ${EMAIL}`)
+    expect(
+      signInLine(profile({ signIn: { staleKeys: null, checked: 'unreachable', person: null } }))
+    ).toBe(`Signed in as ${EMAIL} through hub.example.test`)
+    expect(
+      signInLine(
+        profile({
+          signIn: {
+            state: 'unknown',
+            via: null,
+            email: null,
+            hub: null,
+            checked: 'unreachable',
+            person: null
+          }
+        })
+      )
+    ).toBe('Not signed in')
+    expect(
+      signInLine(
+        profile({
+          signIn: {
+            state: 'needs_login',
+            via: null,
+            email: null,
+            staleKeys: null,
+            checked: 'no_key',
+            person: null
+          }
+        })
+      )
+    ).toBe('Not signed in')
   })
 
   it('says nothing of a state it does not know', () => {
