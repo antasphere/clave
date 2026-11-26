@@ -855,4 +855,55 @@ describe('a record of the decks that cannot be read', () => {
     expect(readFileSync(s.decksFile).equals(before)).toBe(true)
     expect((await s.share.deck('s1', s.folder)).links.map((link) => link.tokenId)).toEqual(['t1'])
   })
+
+  it('refuses the view, a share and a revoke of a target whose entry this version cannot read, before anything runs, and serves the others', async () => {
+    const s = setup()
+    await s.share.share({ sessionId: 's1', target: s.fileA, site: DECKS, link: defaults })
+    // The folder's entry as a later release wrote it: its version a string.
+    const later = {
+      site: DECKS,
+      deckId: 'd9',
+      title: 'deck',
+      version: '2',
+      pushedAt: '2026-11-20T10:00:00.000Z',
+      links: [
+        {
+          tokenId: 'ta',
+          name: 'Clave',
+          url: `${DECKS}/s/secret-ta`,
+          createdAt: '2026-11-20T10:00:01.000Z',
+          expiresAt: null,
+          pinnedVersion: null,
+          hasPassword: false
+        }
+      ]
+    }
+    const document = JSON.parse(readFileSync(s.decksFile, 'utf8')) as {
+      decks: Record<string, unknown>
+    }
+    document.decks[s.folder] = later
+    writeFileSync(s.decksFile, `${JSON.stringify(document, null, 2)}\n`)
+    const ran = s.slideless.calls.length
+    const sentence = `ArtefactRefusal: ${recordUnreadable(
+      s.decksFile,
+      `its entry for ${s.folder} is not one this version of Clave can read`
+    )}`
+    for (const call of [
+      () => s.share.deck('s1', s.folder),
+      () => s.share.share({ sessionId: 's1', target: s.folder, link: defaults }),
+      () => s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults }),
+      () => s.share.revoke('s1', s.folder, 'ta')
+    ])
+      expect(await refusal(call())).toBe(sentence)
+    expect(s.slideless.calls).toHaveLength(ran)
+    // Another target is served, and the entry it cannot read is carried over its write.
+    expect(await s.share.share({ sessionId: 's1', target: s.fileA, link: defaults })).toMatchObject(
+      { _tag: 'shared', deck: { deckId: 'd1', version: 2 } }
+    )
+    expect(
+      (JSON.parse(readFileSync(s.decksFile, 'utf8')) as { decks: Record<string, unknown> }).decks[
+        s.folder
+      ]
+    ).toEqual(later)
+  })
 })

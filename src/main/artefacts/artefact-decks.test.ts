@@ -135,7 +135,7 @@ describe('the decks record', () => {
     )
   })
 
-  it('drops what is no deck and no link, and reads a deck’s last fifty links', () => {
+  it('offers no deck for an entry that is none, drops what is no link, and reads a deck’s last fifty links', () => {
     const many = Array.from({ length: MAX_LINKS_PER_DECK + 5 }, (_, i) => link(i + 1))
     const storage = memory(
       JSON.stringify({
@@ -223,5 +223,93 @@ describe('a record file that cannot be read', () => {
     expect(() => decks.removeLink('/work/a', 't1')).toThrow(unreadable(file))
     expect(readFileSync(file).equals(before)).toBe(true)
     expect(readdirSync(join(file, '..'))).toEqual(['artefact-decks.json'])
+  })
+})
+
+/**
+ * One entry this version cannot read (PRDCT-4266, verifier round 2): one a
+ * later release wrote, as a beta sharing the stable app's data folder would.
+ * Never offered as a deck, never dropped: every write carries it over as the
+ * value it was read, outside the bound, and its own target is refused.
+ */
+describe('an entry this version cannot read', () => {
+  /** `/work/a` as a later release might write it: its version a string, its link `ta`. */
+  const later = {
+    site: SITE,
+    deckId: 'da',
+    title: 'deck a',
+    version: '2',
+    pushedAt: '2026-11-20T10:00:00.000Z',
+    links: [{ ...link(1), tokenId: 'ta' }]
+  }
+  const fileHolding = (decks: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'clave-artefact-decks-'))
+    dirs.push(dir)
+    const file = join(dir, 'artefact-decks.json')
+    writeFileSync(file, `${JSON.stringify({ v: 1, decks }, null, 2)}\n`, { mode: 0o600 })
+    return file
+  }
+  const refusalOf = (call: () => unknown): string => {
+    try {
+      call()
+      return 'no refusal'
+    } catch (error) {
+      return `${(error as Error).name}: ${(error as Error).message}`
+    }
+  }
+
+  it('is carried over every write as the value it was read, and is no deck', () => {
+    const file = fileHolding({ '/work/a': later })
+    const decks = new ArtefactDecks(fileDecksStorage(file))
+    expect(decks.all()).toEqual({})
+    decks.pushed('/work/b', push(2))
+    decks.addLink('/work/b', link(2))
+    const written = JSON.parse(readFileSync(file, 'utf8')) as { v: number; decks: object }
+    // Byte for byte as its value was: the same JSON, key for key, the token with it.
+    expect(JSON.stringify((written.decks as Record<string, unknown>)['/work/a'])).toBe(
+      JSON.stringify(later)
+    )
+    expect(written).toEqual({
+      v: 1,
+      decks: { '/work/b': { ...push(2), links: [link(2)] }, '/work/a': later }
+    })
+    expect(Object.keys(new ArtefactDecks(fileDecksStorage(file)).all())).toEqual(['/work/b'])
+  })
+
+  it('refuses the view, a push and its links for its own target, and serves every other', () => {
+    const file = fileHolding({ '/work/a': later, '/work/b': { ...push(2), links: [link(2)] } })
+    const decks = new ArtefactDecks(fileDecksStorage(file))
+    const before = readFileSync(file)
+    const sentence = `ArtefactRefusal: ${recordUnreadable(
+      file,
+      'its entry for /work/a is not one this version of Clave can read'
+    )}`
+    for (const call of [
+      () => decks.get('/work/a'),
+      () => decks.pushed('/work/a', push(3)),
+      () => decks.addLink('/work/a', link(3)),
+      () => decks.removeLink('/work/a', 'ta')
+    ])
+      expect(refusalOf(call)).toBe(sentence)
+    expect(readFileSync(file).equals(before)).toBe(true)
+    expect(decks.get('/work/b')).toEqual({ ...push(2), links: [link(2)] })
+    expect(decks.removeLink('/work/b', 't2')!.links).toEqual([])
+    expect(
+      (JSON.parse(readFileSync(file, 'utf8')) as { decks: Record<string, unknown> }).decks[
+        '/work/a'
+      ]
+    ).toEqual(later)
+  })
+
+  it('is never counted in the bound of five hundred decks, nor evicted by it', () => {
+    const storage = memory(JSON.stringify({ v: 1, decks: { '/work/a': later } }))
+    const decks = new ArtefactDecks(storage)
+    // Five hundred decks this version reads, then one more: the oldest of them goes, never `/work/a`.
+    for (let n = 1; n <= MAX_DECKS + 1; n++) decks.pushed(`/work/deck-${n}`, push(n))
+    const written = JSON.parse(storage.text!) as { decks: Record<string, unknown> }
+    expect(Object.keys(written.decks)).toHaveLength(MAX_DECKS + 1)
+    expect(written.decks['/work/a']).toEqual(later)
+    expect(written.decks['/work/deck-1']).toBeUndefined()
+    expect(Object.keys(decks.all())).toHaveLength(MAX_DECKS)
   })
 })

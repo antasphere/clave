@@ -13,12 +13,17 @@
  * cannot be read or parsed is an error, never an empty record, and nothing
  * is written over it, since it holds every link's revocation token. Every
  * read and every write is then refused with the sentence naming the file
- * (`recordUnreadable`); only a missing file is an empty record. The file is
- * owner-only, written through a rename (`fileDecksStorage`), since a link's
- * URL is a bearer. Bounded: at most `MAX_DECKS` decks, the one pushed longest
- * ago going first (never the one being written), and `MAX_LINKS_PER_DECK`
- * links per deck, its oldest going first. A deck pushed anew keeps its
- * links; a new deck starts with none.
+ * (`recordUnreadable`); only a missing file is an empty record. The same rule
+ * holds for one entry: an entry this version cannot read (one a later release
+ * wrote, a beta sharing the stable app's data folder, or a hand edit) is never
+ * offered as a deck and never dropped. Every write carries it over as the JSON
+ * value it was read, outside the bound, and the view, the share and the
+ * revocation of its target are refused with the sentence; every other target
+ * works. The file is owner-only, written through a rename (`fileDecksStorage`),
+ * since a link's URL is a bearer. Bounded: at most `MAX_DECKS` decks, the one
+ * pushed longest ago going first (never the one being written), and
+ * `MAX_LINKS_PER_DECK` links per deck, its oldest going first. A deck pushed
+ * anew keeps its links; a new deck starts with none.
  */
 import { readFileSync } from 'node:fs'
 import type { ArtefactShareLink } from '@clave/contract/artefacts'
@@ -127,21 +132,33 @@ const recordOf = (value: unknown): DeckRecord | null => {
   }
 }
 
+/** The record as this version reads it: its decks, and each entry it cannot
+ *  read, kept as the JSON value it was read. */
+interface RecordRead {
+  readonly decks: Record<string, DeckRecord>
+  readonly kept: Record<string, unknown>
+}
+
+const owns = (object: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(object, key)
+
 export class ArtefactDecks {
   constructor(private readonly storage: DecksStorage) {}
 
-  /** The deck of an artefact, by its absolute target. */
+  /** The deck of an artefact, by its absolute target; refused for a target
+   *  whose entry this version cannot read. */
   get(target: string): DeckRecord | undefined {
-    return this.read()[target]
+    return this.readFor(target).decks[target]
   }
 
+  /** The decks this version reads: an entry it cannot read is never one of them. */
   all(): Record<string, DeckRecord> {
-    return this.read()
+    return this.read().decks
   }
 
   /** Records a push: the same deck on the same site keeps its links, another starts with none. */
   pushed(target: string, push: DeckPush): DeckRecord {
-    const decks = this.read()
+    const { decks, kept } = this.readFor(target)
     const before = decks[target]
     const site = normalOrigin(push.site)
     const same = before !== undefined && before.site === site && before.deckId === push.deckId
@@ -154,42 +171,51 @@ export class ArtefactDecks {
       links: same ? before.links : []
     }
     decks[target] = record
-    this.write(decks, target)
+    this.write(decks, kept, target)
     return record
   }
 
   /** Adds a link Clave made to the artefact's deck; over the bound, its oldest goes
    *  (the share refuses a link past it first: the bound only protects the file). */
   addLink(target: string, link: ArtefactShareLink): DeckRecord | undefined {
-    const decks = this.read()
+    const { decks, kept } = this.readFor(target)
     const before = decks[target]
     if (!before) return undefined
     const links = [...before.links.filter((l) => l.tokenId !== link.tokenId), copyLink(link)]
     const record = { ...before, links: links.slice(-MAX_LINKS_PER_DECK) }
     decks[target] = record
-    this.write(decks, target)
+    this.write(decks, kept, target)
     return record
   }
 
   /** Lets go of one of the deck's links, once it is revoked. */
   removeLink(target: string, tokenId: string): DeckRecord | undefined {
-    const decks = this.read()
+    const { decks, kept } = this.readFor(target)
     const before = decks[target]
     if (!before) return undefined
     const record = { ...before, links: before.links.filter((l) => l.tokenId !== tokenId) }
     decks[target] = record
-    this.write(decks, target)
+    this.write(decks, kept, target)
     return record
   }
 
-  /** The record's decks; a missing file is none. A file that exists and cannot
-   *  be read or parsed is refused, so that every write, which reads first,
-   *  leaves it as it is. */
-  private read(): Record<string, DeckRecord> {
+  /** The record, refused for a target whose entry this version cannot read:
+   *  that entry is never shown, pushed over, nor written in place of. */
+  private readFor(target: string): RecordRead {
+    const read = this.read()
+    if (owns(read.kept, target))
+      throw this.unreadable(`its entry for ${target} is not one this version of Clave can read`)
+    return read
+  }
+
+  /** The record's decks, and the entries this version cannot read; a missing
+   *  file is none. A file that exists and cannot be read or parsed is refused,
+   *  so that every write, which reads first, leaves it as it is. */
+  private read(): RecordRead {
     let parsed: unknown
     try {
       const text = this.storage.read()
-      if (text === null) return {}
+      if (text === null) return { decks: {}, kept: {} }
       parsed = JSON.parse(text)
     } catch (error) {
       throw this.unreadable(error instanceof Error ? error.message : String(error))
@@ -200,23 +226,32 @@ export class ArtefactDecks {
       document === null ||
       document.v !== 1 ||
       typeof document.decks !== 'object' ||
-      document.decks === null
+      document.decks === null ||
+      Array.isArray(document.decks)
     )
       throw this.unreadable('it is not a version 1 record')
     const decks: Record<string, DeckRecord> = {}
+    const kept: Record<string, unknown> = {}
     for (const [target, value] of Object.entries(document.decks as Record<string, unknown>)) {
       const record = recordOf(value)
       if (record) decks[target] = record
+      else kept[target] = value
     }
-    return decks
+    return { decks, kept }
   }
 
   private unreadable(reason: string): ArtefactRefusal {
     return new ArtefactRefusal(recordUnreadable(this.storage.file, reason))
   }
 
-  /** Writes the document; over the bound, the decks pushed longest ago go, `keep` never. */
-  private write(decks: Record<string, DeckRecord>, keep: string): void {
+  /** Writes the document: the decks, the ones pushed longest ago going over the
+   *  bound (`keep` never), then every entry this version cannot read, as the
+   *  value it was read, never counted in the bound and never evicted by it. */
+  private write(
+    decks: Record<string, DeckRecord>,
+    kept: Record<string, unknown>,
+    keep: string
+  ): void {
     const excess = Object.keys(decks).length - MAX_DECKS
     if (excess > 0) {
       const oldest = Object.keys(decks)
@@ -225,6 +260,6 @@ export class ArtefactDecks {
         .slice(0, excess)
       for (const target of oldest) delete decks[target]
     }
-    this.storage.write(`${JSON.stringify({ v: 1, decks }, null, 2)}\n`)
+    this.storage.write(`${JSON.stringify({ v: 1, decks: { ...decks, ...kept } }, null, 2)}\n`)
   }
 }
