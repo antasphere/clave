@@ -437,10 +437,12 @@ function ProfileRow({
     >
       <div className="settings-row">
         <div className="min-w-0 flex-1">
-          <p className="settings-row-title" data-slideless-title>
-            {profileTitle(profile)}
+          <p className="settings-row-title">
+            <span data-slideless-name>{profileTitle(profile)}</span>
             {profile.default && (
-              <span className="badge badge-muted ml-2 align-middle">default in the terminal</span>
+              <span className="badge badge-muted ml-2 align-middle" data-slideless-default>
+                default in the terminal
+              </span>
             )}
           </p>
           <p className="settings-row-description" data-line="origin">
