@@ -12,6 +12,12 @@ import { decisionConfig, type DecisionDefinition } from './registry'
  * an HTTP call, not a child process, so an `AbortController` per request is
  * what `cancelAll` ends; the door `shutdown` shuts is the helpers' PRDCT-3375
  * rule: nothing asked during the quit starts a request nothing would end.
+ *
+ * The switch is read again before each request, and the key opened again
+ * before each request but the first of a decision that did not wait its
+ * turn (that key was opened a moment before): a decision switched off, or a
+ * key removed, while it waited its turn or a retry's pause, sends nothing
+ * more, and a request carries the key read just before it.
  */
 
 /** Requests in flight at once, all decisions together; the rest wait in turn. */
@@ -52,7 +58,13 @@ interface Job {
   definition: DecisionDefinition<unknown, unknown>
   input: unknown
   request: JevRequest
+  /** The key `runDecision` read; its first request carries it only when the
+   *  job did not wait its turn. */
   key: string
+  /** Where the key is opened again (a waiting job's turn, a retry). */
+  openKey: () => Promise<string | null>
+  /** It waited behind the cap: at its turn the key is opened again. */
+  waited: boolean
   baseUrl: string
   ask: (options: AskJevOptions) => Promise<JevOutcome>
   controller: AbortController
@@ -74,6 +86,27 @@ function failure(
 const CANCELLED = (): { ok: false; reason: DecisionFailureReason; detail: string } =>
   failure('cancelled', 'Cancelled')
 
+/** The decision's switch as `decisionConfig` says it now: the refusal, or
+ *  null when it may run. */
+function refusalOf(
+  definition: DecisionDefinition<unknown, unknown>
+): { ok: false; reason: DecisionFailureReason; detail: string } | null {
+  const config = decisionConfig(definition)
+  // A process that runs no decision refuses them all, before the key is read.
+  if (config.refused) return failure('disabled', config.refused)
+  if (!config.enabled)
+    return failure('disabled', `Switched off in Settings › Helpers (${definition.label}).`)
+  return null
+}
+
+async function readKey(openKey: () => Promise<string | null>): Promise<string | null> {
+  try {
+    return (await openKey()) || null
+  } catch {
+    return null
+  }
+}
+
 /** Ask a decision in its turn. Never rejects: every way it can end is an
  *  outcome, in the order the README gives. */
 export async function runDecision<Input, Outcome>(
@@ -82,17 +115,11 @@ export async function runDecision<Input, Outcome>(
   options: RunDecisionOptions = {}
 ): Promise<DecisionOutcome<Outcome>> {
   if (closed) return CANCELLED()
-  const config = decisionConfig(definition)
-  // A process that runs no decision refuses them all, before the key is read.
-  if (config.refused) return failure('disabled', config.refused)
-  if (!config.enabled)
-    return failure('disabled', `Switched off in Settings › Helpers (${definition.label}).`)
-  let key: string | null
-  try {
-    key = await (options.openKey ?? (() => jevIntegration.openKey()))()
-  } catch {
-    key = null
-  }
+  // The early checks: a refusal costs no queue.
+  const refusal = refusalOf(definition as DecisionDefinition<unknown, unknown>)
+  if (refusal) return refusal
+  const openKey = options.openKey ?? (() => jevIntegration.openKey())
+  const key = await readKey(openKey)
   if (!key) return failure('no-key', DECISIONS_NEED_KEY)
   // The key was read across an await: the quit may have come meanwhile.
   if (closed) return CANCELLED()
@@ -114,6 +141,8 @@ export async function runDecision<Input, Outcome>(
     input,
     request,
     key,
+    openKey,
+    waited: false,
     baseUrl,
     ask: options.ask ?? askJev,
     controller: new AbortController(),
@@ -124,6 +153,9 @@ export async function runDecision<Input, Outcome>(
     job.resolve = resolve as (outcome: DecisionOutcome<unknown>) => void
     queue.push(job)
     pump()
+    // Not started at once: it waits behind the cap, and its turn reads the
+    // switch and the key again.
+    if (queue.includes(job)) job.waited = true
   })
 }
 
@@ -164,17 +196,31 @@ async function execute(job: Job): Promise<DecisionOutcome<unknown>> {
   let retriedModel = false
   let retried = false
   let outcome: JevOutcome
+  // The key `runDecision` opened a moment ago serves the first request of a
+  // job that did not wait; every other request opens it again.
+  let key: string | null = job.waited ? null : job.key
   for (;;) {
     if (job.cancelled) return CANCELLED()
+    // Before each request, the switch and the key as they are now: switched
+    // off, or the key removed, while this one waited, it sends nothing.
+    const refusal = refusalOf(definition)
+    if (refusal) return refusal
+    if (key === null) {
+      key = await readKey(job.openKey)
+      // Read across an await: a cancel or the quit may have come meanwhile.
+      if (job.cancelled) return CANCELLED()
+      if (!key) return failure('no-key', DECISIONS_NEED_KEY)
+    }
     outcome = await job.ask({
       baseUrl: job.baseUrl,
-      key: job.key,
+      key,
       model,
       request: job.request,
       timeoutMs: definition.timeoutMs,
       signal: job.controller.signal
     })
     if (job.cancelled) return CANCELLED()
+    key = null
     // A version the service retired: once on the fallback, so a decision
     // does not end everywhere until the next release.
     if (

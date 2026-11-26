@@ -74,7 +74,7 @@ knows a decision the catalog does not name, or when a module reaches Electron.
 | Reason        | When                                                                                |
 | ------------- | ----------------------------------------------------------------------------------- |
 | `disabled`    | switched off in Settings, or this process runs no decision (the detail says which)  |
-| `no-key`      | no Jev key on this machine: nothing is built, nothing sent                          |
+| `no-key`      | no Jev key on this machine, when asked or when its turn comes: nothing sent         |
 | `nothing`     | `build` answered null: nothing to ask                                               |
 | `refused`     | 401 or 403: the key, in TypeSafe's own words when it gave some                      |
 | `limit`       | 429 or 529, after ONE retry (the service's `retry-after`, else 500 ms, at most 1.5 s) |
@@ -86,7 +86,9 @@ knows a decision the catalog does not name, or when a module reaches Electron.
 When the service says the model does not exist (a 400, 404 or 422 whose detail names
 `model`: TypeSafe's documentation says nothing more precise), the runner asks ONE more
 request on `fallbackModel`. At most `MAX_RUNNING_DECISIONS` (4) requests are in flight;
-the rest wait in the order asked.
+the rest wait in the order asked, and a decision's turn reads the switch and opens the
+key again: one switched off, or whose key was removed, while it waited answers
+`disabled` or `no-key` and sends nothing.
 
 ## Replaying a decision by hand
 
@@ -99,7 +101,11 @@ shape. It never prints the key. Real calls: never from the test suite.
 ## The config seam
 
 Before each request the runner asks `decisionConfig(definition)`: `{ enabled, refused? }`.
-A decision is on unless a source says otherwise. `installDecisionPreferences()` makes the
+It asks it first when the decision is asked (a refusal costs no queue), then again before
+every request, retries included, and it opens the key again before each one too, but
+the first request of a decision that did not wait its turn, whose key it opened a moment
+before: a request carries the key read just before it. A decision is on unless a source
+says otherwise. `installDecisionPreferences()` makes the
 switches of `decision-preferences.json` that source; it is the owner's call, the process
 that holds the machine's settings and its Jev key. A process that is not the owner (main
 with a server of its own behind the window) calls `refuseDecisionsHere()`: every decision

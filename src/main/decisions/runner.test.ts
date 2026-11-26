@@ -252,6 +252,93 @@ describe('runDecision', () => {
     expect(asked.map((a) => a.request.state)).toEqual([0, 1, 2, 3, 4, 5].map((i) => `tab ${i}`))
   })
 
+  /** Six decisions: four in flight, held, and two waiting their turn. A
+   *  request past the fourth is answered at once, so a decision that should
+   *  not have sent one shows as a wrong outcome, never as a wait. */
+  async function fourInFlightTwoWaiting(openKey: () => Promise<string | null>): Promise<{
+    all: Promise<Awaited<ReturnType<typeof runDecision>>>[]
+    releaseAll: () => void
+  }> {
+    const releases: Array<() => void> = []
+    ask.mockImplementation(async (o: AskJevOptions) => {
+      asked.push(o)
+      if (asked.length <= MAX_RUNNING_DECISIONS)
+        await new Promise<void>((resolve) => {
+          releases.push(resolve)
+          o.signal?.addEventListener('abort', () => resolve())
+        })
+      return ok()
+    })
+    const all = Array.from({ length: 6 }, (_, i) =>
+      runDecision(quill, `tab ${i}`, { ...options, openKey })
+    )
+    await vi.waitFor(() => expect(runningDecisions()).toBe(MAX_RUNNING_DECISIONS))
+    expect(queuedDecisions()).toEqual(['quill-fits', 'quill-fits'])
+    expect(asked).toHaveLength(4)
+    return { all, releaseAll: () => releases.splice(0).forEach((release) => release()) }
+  }
+
+  it('the key removed while two wait their turn: they answer no-key and send nothing', async () => {
+    let key: string | null = KEY
+    const { all, releaseAll } = await fourInFlightTwoWaiting(async () => key)
+    key = null
+    releaseAll()
+    const outcomes = await Promise.all(all)
+    expect(outcomes.map((o) => (o.ok ? 'ok' : o.reason))).toEqual([
+      'ok',
+      'ok',
+      'ok',
+      'ok',
+      'no-key',
+      'no-key'
+    ])
+    expect(outcomes[5]).toEqual({ ok: false, reason: 'no-key', detail: DECISIONS_NEED_KEY })
+    expect(asked).toHaveLength(4)
+  })
+
+  it('switched off while two wait their turn: they answer disabled and send nothing', async () => {
+    const { all, releaseAll } = await fourInFlightTwoWaiting(async () => KEY)
+    setDecisionConfigSource(() => ({ enabled: false }))
+    releaseAll()
+    const outcomes = await Promise.all(all)
+    expect(outcomes.map((o) => (o.ok ? 'ok' : o.reason))).toEqual([
+      'ok',
+      'ok',
+      'ok',
+      'ok',
+      'disabled',
+      'disabled'
+    ])
+    expect(outcomes[4]).toEqual({
+      ok: false,
+      reason: 'disabled',
+      detail: 'Switched off in Settings › Helpers (Quill fits).'
+    })
+    expect(asked).toHaveLength(4)
+  })
+
+  it('a decision that waited carries the key read at its turn', async () => {
+    let key: string | null = KEY
+    const { all, releaseAll } = await fourInFlightTwoWaiting(async () => key)
+    key = 'ts-unit-test-key-0002'
+    releaseAll()
+    for (const outcome of await Promise.all(all)) expect(outcome.ok).toBe(true)
+    expect(asked.map((a) => a.key)).toEqual([KEY, KEY, KEY, KEY, key, key])
+  })
+
+  it('the key removed during the pause before a retry: no-key, the retry not sent', async () => {
+    vi.useFakeTimers()
+    let key: string | null = KEY
+    replies = [{ kind: 'limit', retryAfterMs: 1000 }, ok()]
+    const running = runDecision(quill, 'a tab', { ...options, openKey: async () => key })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(asked).toHaveLength(1)
+    key = null
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(await running).toMatchObject({ ok: false, reason: 'no-key' })
+    expect(asked).toHaveLength(1)
+  })
+
   it('cancelAll aborts the running requests and answers the waiting ones cancelled; the door stays open', async () => {
     const signals: AbortSignal[] = []
     ask.mockImplementation(
