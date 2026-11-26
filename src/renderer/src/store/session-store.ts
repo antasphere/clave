@@ -350,8 +350,10 @@ interface SessionState {
   ungroupSessions: (groupId: string) => void
   deleteGroup: (groupId: string) => void
   /** A rename by anyone but Clave clears `autoNamed`: the name is theirs for
-   *  good. `auto` is Clave's own naming (PRDCT-5179): the flag stays, and no
-   *  undo step is taken, so Cmd+Z after grouping still undoes the grouping. */
+   *  good, even when they confirm the name Clave gave (no undo step then,
+   *  since the name did not change). `auto` is Clave's own naming
+   *  (PRDCT-5179): the flag stays, and no undo step is taken, so Cmd+Z after
+   *  grouping still undoes the grouping. */
   renameGroup: (groupId: string, name: string, options?: { auto?: boolean }) => void
   toggleGroupCollapsed: (groupId: string) => void
   /** Attach (or clear, with null) a group's web view. */
@@ -1992,22 +1994,28 @@ export const useSessionStore = create<SessionState>((set) => ({
     set((state) => {
       const target = state.groups.find((g) => g.id === groupId)
       const nextName = name.trim() || 'Group'
-      if (!target || target.name === nextName) return {}
+      if (!target) return {}
       // Clave names only a group still waiting for its name.
       if (options?.auto) {
-        if (!target.autoNamed) return {}
+        if (!target.autoNamed || target.name === nextName) return {}
         return {
           groups: state.groups.map((g) => (g.id === groupId ? { ...g, name: nextName } : g))
         }
       }
+      const taken = (g: SessionGroup): SessionGroup => {
+        const { autoNamed: _given, ...named } = g
+        void _given
+        return { ...named, name: nextName }
+      }
+      if (target.name === nextName) {
+        // Someone confirms the name Clave gave: the group is theirs all the
+        // same (PRDCT-5179), with no undo step, since the name did not change.
+        if (!target.autoNamed) return {}
+        return { groups: state.groups.map((g) => (g.id === groupId ? taken(g) : g)) }
+      }
       const sidebarUndoStack = pushSidebarSnapshot(state.sidebarUndoStack, snapshotSidebar(state))
       return {
-        groups: state.groups.map((g) => {
-          if (g.id !== groupId) return g
-          const { autoNamed: _given, ...named } = g
-          void _given
-          return { ...named, name: nextName }
-        }),
+        groups: state.groups.map((g) => (g.id === groupId ? taken(g) : g)),
         sidebarUndoStack
       }
     }),

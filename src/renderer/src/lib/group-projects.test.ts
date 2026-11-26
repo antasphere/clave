@@ -337,6 +337,22 @@ describe('the flag', () => {
     expect(groupOf('g')?.name).toBe('Quill')
   })
 
+  it('a rename to the very name Clave gave takes the group: the flag goes, with no undo step', () => {
+    const store = useSessionStore.getState()
+    store.renameGroup('g', 'Atlas', { auto: true })
+    expect(groupOf('g')).toMatchObject({ name: 'Atlas', autoNamed: true })
+    store.renameGroup('g', ' Atlas ')
+    expect(groupOf('g')?.name).toBe('Atlas')
+    expect(groupOf('g')?.autoNamed).toBeUndefined()
+    expect(useSessionStore.getState().sidebarUndoStack).toHaveLength(0)
+    store.renameGroup('g', 'Tern', { auto: true })
+    expect(groupOf('g')?.name).toBe('Atlas')
+    // A group nobody waits to name is left exactly as it is.
+    const groups = useSessionStore.getState().groups
+    store.renameGroup('mine', 'Mine')
+    expect(useSessionStore.getState().groups).toBe(groups)
+  })
+
   it('Cmd+Z after a person’s grouping named by Clave still undoes the grouping', () => {
     const store = useSessionStore.getState()
     const id = store.createGroup(['loose'], undefined, undefined, { autoNamed: true })!

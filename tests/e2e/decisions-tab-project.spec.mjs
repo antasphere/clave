@@ -41,7 +41,9 @@
  *     name it was given, and nothing is asked for it;
  * 14. an agent's rename (`clave_rename`) of a person's group Clave named makes
  *     the name the agent's in every mode (in-process it lands on the server's
- *     layout): a tab dragged in after moves nothing and asks nothing.
+ *     layout): a tab dragged in after moves nothing and asks nothing;
+ * 15. a person who renames a group to the very name Clave gave it takes it:
+ *     a tab dragged in after moves nothing and asks nothing.
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
@@ -678,6 +680,28 @@ export async function run(t) {
       'Agent picked'
     )
     t.equal(`14. [${MODE}] and no request reached the stub`, asked() - before14, 0)
+
+    // ── 15. A person who confirms Clave's name takes the group ──
+    const s1 = await openTab(app, win, 'Quill twelve', P('quill'), SAY.quill(12))
+    const s2 = await openTab(app, win, 'Quill thirteen', P('quill'), SAY.quill(13))
+    const g15 = await groupByKeymap(win, [s1.id, s2.id])
+    t.equal('15. Clave names a person’s group first', await waitName(win, g15.id, 'Quill'), 'Quill')
+    await renameByHand(win, g15.id, 'Quill')
+    const took15 = await until(async () =>
+      (await groupsNow(win)).find((g) => g.id === g15.id)?.autoNamed === false ? true : null
+    )
+    t.check(
+      `15. [${MODE}] renamed by hand to the name it shows, the group leaves Clave’s naming`,
+      took15 === true,
+      (await groupsNow(win)).find((g) => g.id === g15.id)
+    )
+    const a5 = await openTab(app, win, 'Atlas five', P('atlas'), SAY.atlas(5))
+    const before15 = asked()
+    await dragInto(win, a5.id, g15.id)
+    t.equal('15. an Atlas tab dragged into it joins it', (await groupOfTab(win, a5.id))?.id, g15.id)
+    await win.waitForTimeout(SETTLE_MS)
+    t.equal(`15. [${MODE}] the name stays the person’s`, await shownName(win, g15.id), 'Quill')
+    t.equal(`15. [${MODE}] and no request reached the stub`, asked() - before15, 0)
 
     t.equal('no page error', errors.join(' | '), '')
   } finally {
