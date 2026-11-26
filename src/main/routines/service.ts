@@ -47,7 +47,7 @@ import type {
 import type { SpawnOptions } from '@clave/contract/sessions'
 import type { SessionStream } from '@clave/contract/sessions'
 import type { StoragePort } from '../ports/storage'
-import { Viewer, type ViewerOptions } from '../../../plugins/analytics/src/viewer'
+import { Viewer, type ViewerCommand } from '../../../plugins/analytics/src/viewer'
 import { Claims } from './claims'
 import {
   CREATED_FILE,
@@ -128,10 +128,10 @@ export interface RoutineServiceOptions {
    *  template (PRDCT-4242): the app's `resources/routines/default-report`.
    *  Absent, a created routine must name a template of its own. */
   readonly defaultTemplate?: string
-  /** The viewer: the login shell's environment the CLI is found in; `false` for no viewer (tests). */
-  readonly viewer?:
-    | { env: () => Promise<Record<string, string>>; spawn?: ViewerOptions['spawn'] }
-    | false
+  /** The viewer: the command that runs this server's own copy of Slideless, asked at each
+   *  of its starts (`viewerCommand`, `artefacts/slideless-viewer-command.ts`, PRDCT-4499);
+   *  `false` for no viewer (tests). */
+  readonly viewer: { command: () => Promise<ViewerCommand | { missing: string }> } | false
   /** The session belongs to the window from now on (the discussion in a window's panel). */
   readonly rehome: (sessionId: string, windowKey: string) => void
   /** The provider's own conversation id of a session (a Claude session id, a Codex thread), when known. */
@@ -232,8 +232,7 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
       root: decksRoot,
       savedPort: store.viewerPort(),
       onPort: (port) => store.setViewerPort(port),
-      env: options.viewer?.env ?? (async () => ({ ...process.env }) as Record<string, string>),
-      ...(options.viewer?.spawn ? { spawn: options.viewer.spawn } : {}),
+      command: options.viewer.command,
       log: (level, message) => log(level, `viewer: ${message}`)
     })
     void viewer.start().then(() => emit())

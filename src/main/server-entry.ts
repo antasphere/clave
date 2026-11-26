@@ -138,6 +138,7 @@ import {
 // ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
 import { ForwardRegistry } from '@clave/server/forward-registry'
 import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
+import { viewerCommand } from './artefacts/slideless-viewer-command'
 import { ArtefactLinks, fileLinksStorage } from './artefacts/links'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
@@ -525,7 +526,11 @@ async function main(): Promise<void> {
           log: (level, message) =>
             process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
         }),
-    viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
+    // This server's own copy under its data folder, run by the Node its
+    // artefact service gets (PRDCT-4499).
+    viewer: TEST_NO_ACTIVATE
+      ? false
+      : { command: () => viewerCommand({ dataDir, execPath: slidelessNode, env: process.env }) },
     rehome: (sessionId, windowKey) => ptyManager.setSessionWindowKey(sessionId, windowKey),
     // A run reports through the agent tools: the daemon's own MCP once it
     // listens, the attached shell's address once it is announced (round 1,

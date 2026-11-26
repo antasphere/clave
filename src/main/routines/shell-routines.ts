@@ -30,6 +30,7 @@ import { workspaceFiles } from '../workspace-files'
 import { broadcastToAllWindows } from '../window-routing'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { waitForMcpRuntime } from '../mcp/mcp-runtime'
+import { viewerCommand } from '../artefacts/slideless-viewer-command'
 import { launchFactsFromManagers } from './facts'
 import { SlidelessPublisher } from './publisher'
 import { createRoutineService, type RoutineService } from './service'
@@ -92,7 +93,14 @@ export function shellRoutines(): RoutineService {
           log: (level, message) =>
             (level === 'warn' ? console.warn : console.log)(`[routines] ${message}`)
         }),
-    viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
+    // The copy the in-process artefact service installs under user data, run by
+    // this process's own binary as Node (PRDCT-4499).
+    viewer: TEST_NO_ACTIVATE
+      ? false
+      : {
+          command: () =>
+            viewerCommand({ dataDir: userData, execPath: process.execPath, env: process.env })
+        },
     rehome: (sessionId, windowKey) => {
       ptyManager.setSessionWindowKey(sessionId, windowKey)
       sessionWindows().bind(sessionId, windowKey)
