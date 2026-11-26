@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TabProjects } from '@clave/contract/tab-projects-rules'
 import { DECISION_FAILURE_REASONS } from '@clave/contract/decisions'
 import type { RegistryWorkspace } from '../routines/resolve'
-import { hostDecisions, type DecisionRecord, type HostDecisionsOptions } from './host'
+import {
+  defaultPreflight,
+  hostDecisions,
+  type DecisionRecord,
+  type HostDecisionsOptions
+} from './host'
+import { setDecisionConfigSource, type DecisionConfig } from './registry'
 import type { ProjectOption } from './project-options'
 import type { TabReading, TabSource } from './tab-reading'
 import { basisOf, tabProjectDecision, type TabProjectInput } from './tab-project'
@@ -389,6 +395,39 @@ describe('a host where the decision cannot run', () => {
       expect(s.records.get('a')?.projects).toEqual(read.projects)
     })
   }
+
+  it('its own check: switched off or refused here is disabled, else no key is no-key', () => {
+    const on = (): DecisionConfig => ({ enabled: true })
+    expect(defaultPreflight({ config: on, keyHeld: () => true })).toBeNull()
+    expect(defaultPreflight({ config: on, keyHeld: () => false })).toBe('no-key')
+    expect(defaultPreflight({ config: () => ({ enabled: false }), keyHeld: () => true })).toBe(
+      'disabled'
+    )
+    expect(
+      defaultPreflight({
+        config: () => ({ enabled: true, refused: 'Decisions run on Clave’s server.' }),
+        keyHeld: () => true
+      })
+    ).toBe('disabled')
+    // The switch first: switched off, the key is not even looked at.
+    const keyHeld = vi.fn(() => false)
+    expect(defaultPreflight({ config: () => ({ enabled: false }), keyHeld })).toBe('disabled')
+    expect(keyHeld).not.toHaveBeenCalled()
+  })
+
+  it('with no check given, the host reads the decision’s own switch', async () => {
+    setDecisionConfigSource((id) => (id === tabProjectDecision.id ? { enabled: false } : undefined))
+    try {
+      const s = setup({ a: read }, { preflight: undefined })
+      expect(await s.host.readTabProjects(['a'])).toEqual([
+        { sessionId: 'a', projects: null, reason: 'disabled', written: false }
+      ])
+      expect(s.reads).toEqual([])
+      expect(s.runs).toEqual([])
+    } finally {
+      setDecisionConfigSource()
+    }
+  })
 
   it('goes on when whether it may run cannot be read', async () => {
     const s = setup(

@@ -299,6 +299,31 @@ describe('when a group is read again', () => {
     stop()
   })
 
+  it('a group offering two projects whose last agent tab leaves loses its offer, asking nothing', async () => {
+    vi.useFakeTimers()
+    useGroupSuggestionsStore.setState({
+      byGroup: {
+        g: [
+          { name: 'Lumen', share: 0.63 },
+          { name: 'Atlas', share: 0.23 }
+        ]
+      }
+    })
+    const read = reader({})
+    const stop = projects.startGroupNaming({ read })
+    // `a` is moved out and `b` is closed: the group keeps its terminal only.
+    useSessionStore.setState((s) => ({
+      sessions: s.sessions.filter((x) => x.id !== 'b'),
+      groups: s.groups.map((g) => (g.id === 'g' ? { ...g, sessionIds: [] } : g)),
+      displayOrder: [...s.displayOrder, 'a']
+    }))
+    await vi.advanceTimersByTimeAsync(projects.GROUP_NAMING_DEBOUNCE_MS)
+    expect(groupOf('g')).toMatchObject({ name: 'Group 1', autoNamed: true })
+    expect(suggestionOf('g')).toBeUndefined()
+    expect(read.calls).toEqual([])
+    stop()
+  })
+
   it('a group not autoNamed, a member the store never held leaving, and a new group: no read', async () => {
     vi.useFakeTimers()
     useSessionStore.setState((s) => ({

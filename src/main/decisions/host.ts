@@ -7,7 +7,7 @@ import { projectOptionsOf, type ProjectOption } from './project-options'
 import { readTab, type TabHarness, type TabReading, type TabSource } from './tab-reading'
 import { basisOf, tabProjectDecision, type TabProjectInput } from './tab-project'
 import { runDecision, type DecisionFailureReason, type DecisionOutcome } from './runner'
-import { decisionConfig } from './registry'
+import { decisionConfig, type DecisionConfig } from './registry'
 import { jevIntegration } from '../integrations/jev'
 import type { TabProjectOutcome } from './tab-project'
 
@@ -104,16 +104,32 @@ function harnessOf(
   return null
 }
 
-/** The decision's switch, then this process's key: read from the settings
- *  files alone, no Keychain call, no request. */
-function defaultPreflight(): DecisionFailureReason | null {
-  const config = decisionConfig(tabProjectDecision)
+/** What the host's own check reads: the decision's switch, and whether this
+ *  process holds a Jev key. */
+export interface PreflightSources {
+  /** The decision's config (`decisionConfig`). */
+  config: () => DecisionConfig
+  /** Whether a key is held: the settings file alone, no Keychain call. */
+  keyHeld: () => boolean
+}
+
+/** The host's own check, before any tab is read: the decision's switch,
+ *  then the key, no request either way. The reason the decision cannot run
+ *  here, or null. */
+export function defaultPreflight(sources: PreflightSources): DecisionFailureReason | null {
+  const config = sources.config()
   if (config.refused || !config.enabled) return 'disabled'
-  return jevIntegration.status().configured ? null : 'no-key'
+  return sources.keyHeld() ? null : 'no-key'
 }
 
 export function hostDecisions(options: HostDecisionsOptions): HostDecisions {
-  const preflight = options.preflight ?? defaultPreflight
+  const preflight =
+    options.preflight ??
+    ((): DecisionFailureReason | null =>
+      defaultPreflight({
+        config: () => decisionConfig(tabProjectDecision),
+        keyHeld: () => jevIntegration.status().configured
+      }))
   const read = options.readTab ?? readTab
   const now = options.now ?? Date.now
   const home = options.home ?? os.homedir()

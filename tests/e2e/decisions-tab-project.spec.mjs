@@ -45,7 +45,12 @@
  *     the name the agent's in every mode (in-process it lands on the server's
  *     layout): a tab dragged in after moves nothing and asks nothing;
  * 15. a person who renames a group to the very name Clave gave it takes it:
- *     a tab dragged in after moves nothing and asks nothing.
+ *     a tab dragged in after moves nothing and asks nothing;
+ * 16. a group offering the two nearest projects whose only agent tab is
+ *     closed stays, and its offer goes.
+ *
+ * Roads 10 and 11 also regroup two tabs read EARLIER, whose records carry a
+ * reading: the host's own check of the switch and of the key serves none.
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
@@ -470,6 +475,17 @@ export async function run(t) {
     t.equal('9. and the stub’s count of requests has not moved', asked() - before9, 0)
 
     // ── 10. Switched off ──
+    // Two tabs read EARLIER first: their records carry a reading, which the
+    // host must not serve once the decision is off.
+    const e1 = await openTab(app, win, 'Quill fourteen', P('quill'), SAY.quill(14))
+    const e2 = await openTab(app, win, 'Quill fifteen', P('quill'), SAY.quill(15))
+    const ge = await groupByKeymap(win, [e1.id, e2.id])
+    t.equal(
+      '10. two tabs read while it is on: « Quill »',
+      await waitName(win, ge.id, 'Quill'),
+      'Quill'
+    )
+    t.check('10. and ungrouped', (await ungroupByKeymap(win, ge)) === true)
     t.check(
       '10. « Tab project » is switched off in Helpers',
       (await setTabProject(win, false)) === true
@@ -490,6 +506,19 @@ export async function run(t) {
       '10. the server answers « disabled », with no reading',
       off?.tabs?.[0]?.reason === 'disabled' && off?.tabs?.[0]?.projects === null,
       off
+    )
+    const ge10 = await groupByKeymap(win, [e1.id, e2.id])
+    await win.waitForTimeout(SETTLE_MS)
+    t.check(
+      '10. grouping the two tabs read earlier leaves « Group N » too',
+      isGroupN(await shownName(win, ge10.id)),
+      await shownName(win, ge10.id)
+    )
+    const offRead = await win.evaluate((ids) => window.electronAPI.readTabProjects(ids), [e1.id])
+    t.check(
+      '10. and for a tab read earlier the server answers « disabled », serving no reading',
+      offRead?.tabs?.[0]?.reason === 'disabled' && offRead?.tabs?.[0]?.projects === null,
+      offRead
     )
     t.equal('10. and the stub’s count has not moved', asked() - before10, 0)
     t.check('10. switched back on after', (await setTabProject(win, true)) === true)
@@ -530,6 +559,23 @@ export async function run(t) {
       noKey?.tabs?.[0]?.reason === 'no-key' && noKey?.tabs?.[0]?.projects === null,
       noKey
     )
+    t.check(
+      '11. the group of the tabs read earlier is ungrouped',
+      (await ungroupByKeymap(win, ge10)) === true
+    )
+    const ge11 = await groupByKeymap(win, [e1.id, e2.id])
+    await win.waitForTimeout(SETTLE_MS)
+    t.check(
+      '11. grouping the two tabs read earlier leaves « Group N »',
+      isGroupN(await shownName(win, ge11.id)),
+      await shownName(win, ge11.id)
+    )
+    const noKeyRead = await win.evaluate((ids) => window.electronAPI.readTabProjects(ids), [e1.id])
+    t.check(
+      '11. and for a tab read earlier the server answers « no-key », serving no reading',
+      noKeyRead?.tabs?.[0]?.reason === 'no-key' && noKeyRead?.tabs?.[0]?.projects === null,
+      noKeyRead
+    )
     t.equal('11. and the stub’s count has not moved', asked() - before11, 0)
     // The key back, so a read at the next boot would reach the stub.
     card = await openJevCard(win)
@@ -554,10 +600,10 @@ export async function run(t) {
       [g7.id, 'Ink and margins'],
       [g8.id, 'Quill | Atlas']
     ]
-    const unread = [g6.id, g11.id]
+    const unread = [g6.id, g11.id, ge11.id]
     const unreadNames = new Map()
     for (const id of unread) unreadNames.set(id, await shownName(win, id))
-    const readTabs = [q1, q2, q3, a1, c1, n1, q4, q5, a3]
+    const readTabs = [q1, q2, q3, a1, c1, n1, q4, q5, a3, e1, e2]
     // Never read: the tab that joined a group named by hand (road 7), and the
     // two grouped while switched off and without a key (roads 10 and 11).
     const neverRead = [a2, f1, f2]
@@ -717,6 +763,34 @@ export async function run(t) {
     await win.waitForTimeout(SETTLE_MS)
     t.equal(`15. [${MODE}] the name stays the person’s`, await shownName(win, g15.id), 'Quill')
     t.equal(`15. [${MODE}] and no request reached the stub`, asked() - before15, 0)
+
+    // ── 16. A group whose last agent tab goes loses its offer ──
+    stub.answer({ lightbox: ANSWERS.lightbox })
+    const c2 = await openTab(app, win, 'Close call two', P('lumen'), SAY.close)
+    const g16 = await groupByKeymap(win, [c2.id])
+    const chips16 = await until(async () => {
+      const chips = await chipsOf(win, g16.id)
+      return chips.length === 2 ? chips : null
+    })
+    t.equal(
+      '16. Jev hesitates: the group offers the two nearest',
+      JSON.stringify(chips16),
+      JSON.stringify(['Lumen 63%', 'Atlas 23%'])
+    )
+    await callMcp(app, 'closeSession', { sessionId: c2.id })
+    const closed16 = await until(async () => ((await groupOfTab(win, c2.id)) ? null : true))
+    t.check('16. its only agent tab is closed', closed16 === true)
+    await win.waitForTimeout(SETTLE_MS)
+    t.check(
+      `16. [${MODE}] the group is still there, with no agent tab`,
+      (await groupsNow(win)).some((g) => g.id === g16.id),
+      await groupsNow(win)
+    )
+    t.equal(
+      `16. [${MODE}] and its offer is gone`,
+      JSON.stringify(await chipsOf(win, g16.id)),
+      JSON.stringify([])
+    )
 
     t.equal('no page error', errors.join(' | '), '')
   } finally {

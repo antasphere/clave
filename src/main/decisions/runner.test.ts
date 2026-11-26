@@ -386,6 +386,52 @@ describe('runDecision', () => {
     expect(ask).toHaveBeenCalledTimes(1)
   })
 
+  it('the quit while the key is being read sends nothing', async () => {
+    let release: (key: string) => void = () => undefined
+    const pending = runDecision(quill, 'a tab', {
+      ...options,
+      openKey: () => new Promise<string>((resolve) => (release = resolve))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // The quit, while the Keychain is still answering.
+    shutdown()
+    release(KEY)
+    expect(await pending).toEqual({ ok: false, reason: 'cancelled', detail: 'Cancelled' })
+    expect(asked).toHaveLength(0)
+  })
+
+  it('the quit while a waiting decision opens its key at its turn sends nothing', async () => {
+    const releases: Array<() => void> = []
+    ask.mockImplementation(async (o: AskJevOptions) => {
+      asked.push(o)
+      await new Promise<void>((resolve) => {
+        releases.push(resolve)
+        if (o.signal?.aborted) resolve()
+        o.signal?.addEventListener('abort', () => resolve())
+      })
+      return ok()
+    })
+    // Five decisions open their key once each; the fifth waits, and opens it
+    // again at its turn: that sixth read is the one the quit meets.
+    let reads = 0
+    let turnKey: (key: string) => void = () => undefined
+    const openKey = (): Promise<string> =>
+      ++reads === 6 ? new Promise<string>((resolve) => (turnKey = resolve)) : Promise.resolve(KEY)
+    const all = Array.from({ length: 5 }, (_, i) =>
+      runDecision(quill, `tab ${i}`, { ...options, openKey })
+    )
+    await vi.waitFor(() => expect(runningDecisions()).toBe(MAX_RUNNING_DECISIONS))
+    expect(queuedDecisions()).toHaveLength(1)
+    // One request ends: the waiting decision's turn comes, its key is opened.
+    releases.shift()!()
+    await vi.waitFor(() => expect(reads).toBe(6))
+    shutdown()
+    turnKey(KEY)
+    const outcomes = await Promise.all(all)
+    expect(outcomes[4]).toEqual({ ok: false, reason: 'cancelled', detail: 'Cancelled' })
+    expect(asked).toHaveLength(4)
+  })
+
   it('goes through fetch by default: the endpoint, the bearer key, the body', async () => {
     const calls: { url: string; init: RequestInit }[] = []
     vi.stubGlobal(
