@@ -214,13 +214,22 @@ export function defaultSite(accounts: SlidelessAccounts | null): string {
 export const FIRST_SITE_OFFERED =
   '« New links go to » is not chosen in Settings › Slideless: the first site is offered.'
 
+/** The line when « New links go to » names a site the listing no longer has. */
+export const firstSiteOfferedFor = (site: string): string =>
+  `« New links go to » names ${site}, which is no longer one of this machine's Slideless sites: the first site is offered.`
+
 /** The line under « Create link »'s site when it offers the listing's first
- *  site only because « New links go to » is not chosen; null otherwise.
- *  `chosen` is the site the dialog has a reason for (the person's pick, a
- *  gone deck's own site), empty when it has none. */
+ *  site only because « New links go to » is not chosen, or names a site the
+ *  listing no longer has; null otherwise. `chosen` is the site the dialog has
+ *  a reason for (the person's pick, a gone deck's own site), empty when it
+ *  has none. */
 export function firstSiteNotice(accounts: SlidelessAccounts | null, chosen: string): string | null {
-  if (chosen !== '' || !accounts || accounts.newLinksSite !== null) return null
-  return accounts.profiles.length > 0 ? FIRST_SITE_OFFERED : null
+  if (chosen !== '' || !accounts || accounts.profiles.length === 0) return null
+  const setting = accounts.newLinksSite
+  if (setting === null) return FIRST_SITE_OFFERED
+  return accounts.profiles.some((profile) => sameOrigin(profile.site.origin, setting))
+    ? null
+    : firstSiteOfferedFor(normalOrigin(setting))
 }
 
 export const PASSWORD_MIN = 4

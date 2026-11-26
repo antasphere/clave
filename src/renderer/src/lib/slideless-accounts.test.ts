@@ -313,15 +313,18 @@ describe('« Create link »', () => {
     expect(defaultSite(null)).toBe('')
   })
 
-  it('says the first site is offered only because « New links go to » is not chosen', () => {
+  it('says the first site is offered only because « New links go to » is not chosen, or names a site no longer listed', () => {
     const profiles = [profile(), profile({ origin: CLOUD, name: 'Cloud' })]
     expect(firstSiteNotice(listing(profiles, null), '')).toBe(
       '« New links go to » is not chosen in Settings › Slideless: the first site is offered.'
     )
     expect(FIRST_SITE_OFFERED).toBe(firstSiteNotice(listing(profiles, null), ''))
-    // Chosen, even a site no longer listed: the line would not be true.
-    expect(firstSiteNotice(listing(profiles, CLOUD), '')).toBeNull()
-    expect(firstSiteNotice(listing(profiles, 'https://gone.example.test'), '')).toBeNull()
+    // Chosen and listed: nothing to say.
+    expect(firstSiteNotice(listing(profiles, `${CLOUD}/`), '')).toBeNull()
+    // Chosen and no longer listed: the dialog falls back to the first site, and says so.
+    expect(firstSiteNotice(listing(profiles, 'https://gone.example.test/'), '')).toBe(
+      "« New links go to » names https://gone.example.test, which is no longer one of this machine's Slideless sites: the first site is offered."
+    )
     // A site the dialog has a reason for (the person's pick, a gone deck's site).
     expect(firstSiteNotice(listing(profiles, null), DECKS)).toBeNull()
     // Nothing offered, or nothing read yet.

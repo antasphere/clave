@@ -69,8 +69,8 @@ const serverIdOf = (machine: string): string | undefined =>
   machine === LOCAL_SERVER_ID ? undefined : machine
 /** The select's entry for « New links go to » when none is named. */
 const NOT_CHOSEN = '__not-chosen__'
-/** The page's one line while Clave updates a copy too old for the accounts. */
-const UPDATING = 'Clave is updating its Slideless to the latest release…'
+/** The page's one line while Clave installs its copy: one too old for the accounts, or none yet. */
+const UPDATING = 'Clave is installing the latest release of Slideless…'
 
 interface AccountsView {
   readonly machine: string
@@ -279,8 +279,10 @@ function AccountsBody({ view }: { view: AccountsView }): ReactElement {
   // while it installs, the page says so in place of « Install latest », and
   // once the install is over the accounts are read again, as on open.
   const phase = useArtefactStore((s) => s.slideless[machine]?.phase)
-  const updating = phase === 'installing' && accounts?.needsUpdate === true
+  // Whatever the listing said while the install runs (too old, or « being
+  // installed » when the page opened during it), the page says the install.
   const unlisted = !!accounts?.error
+  const updating = phase === 'installing' && unlisted
   const lastPhase = useRef(phase)
   useEffect(() => {
     const before = lastPhase.current
