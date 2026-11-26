@@ -145,7 +145,7 @@ describe('what a failed run says', () => {
   it('is the first error line, else how the command ended', () => {
     expect(
       runFailure({ code: 1, stdout: '', stderr: '\nError: no such deck\nmore\n', timedOut: false })
-    ).toBe('Error: no such deck')
+    ).toBe('no such deck')
     expect(runFailure({ code: 3, stdout: '', stderr: '', timedOut: false })).toBe(
       'Slideless stopped with exit code 3.'
     )

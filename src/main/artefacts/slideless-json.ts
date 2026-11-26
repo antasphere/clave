@@ -103,3 +103,18 @@ export const isGone = (result: SlidelessExit): boolean =>
 /** The first line that says something, trimmed and kept short. */
 export const firstLine = (text: string): string =>
   (text.split('\n').find((l) => l.trim() !== '') ?? '').trim().slice(0, 300)
+
+/**
+ * The line of the command's errors that says why it failed: its first
+ * `Error:` line, the prefix dropped, else its first line. A command older
+ * than its site opens its errors with a notice saying so (Slideless 0.15),
+ * which never says why the command failed.
+ */
+export const errorLine = (stderr: string): string => {
+  const lines = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+  const error = lines.find((line) => /^error:/i.test(line))
+  return (error ? error.replace(/^error:\s*/i, '') : (lines[0] ?? '')).slice(0, 300)
+}

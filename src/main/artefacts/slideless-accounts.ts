@@ -49,6 +49,17 @@ export const SIGN_IN_KINDS: readonly string[] = [
 ]
 
 export const NO_LISTING = 'Slideless answered with no listing Clave can read.'
+export const SITE_ADDRESS = "A site's address starts with https://."
+
+/** An http(s) address: what a site is, and never a command line option. */
+const isSiteAddress = (value: string): boolean => {
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
 export const notASite = (origin: string): string =>
   `${normalOrigin(origin)} is not one of this machine's Slideless sites.`
 
@@ -84,6 +95,27 @@ export const unlisted = (error: string, needsUpdate = false): SlidelessAccounts 
   error,
   needsUpdate
 })
+
+/**
+ * A fix's command line as the listing wrote it, after Clave's global options
+ * (`--api-url <site>`, `--json`), its binary dropped. Null when the fix names
+ * another site than its own row's: the command takes the last `--api-url`,
+ * so a fix naming another one would run there.
+ */
+export function fixArgs(fix: SlidelessProfileFix, site: string): string[] | null {
+  const rest = fix.argv.slice(1)
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!
+    const named =
+      arg === '--api-url'
+        ? (rest[i + 1] ?? '')
+        : arg.startsWith('--api-url=')
+          ? arg.slice('--api-url='.length)
+          : undefined
+    if (named !== undefined && normalOrigin(named) !== normalOrigin(site)) return null
+  }
+  return ['--api-url', normalOrigin(site), '--json', ...rest]
+}
 
 /** The profile of a site, its origins compared in normal form. */
 export const profileAt = (
@@ -240,6 +272,8 @@ export function createSlidelessAccounts(deps: AccountsDeps): SlidelessAccountsSe
     list,
     listed,
     addSite: async (url) => {
+      // An http(s) address, never an option of the command: refused before anything runs.
+      if (!isSiteAddress(url)) throw new ArtefactRefusal(SITE_ADDRESS)
       gate()
       // Its site is its argument: no --api-url.
       const run = await deps.run(['--json', 'profiles', 'add', url.trim()], {
@@ -279,16 +313,20 @@ export function createSlidelessAccounts(deps: AccountsDeps): SlidelessAccountsSe
       if (kind !== 'remove_profile' || fix.argv.length < 2)
         throw new ArtefactRefusal(`Clave does not run this fix (${kind}).`)
       // The fix's own command line, as the listing wrote it, after the global options.
-      const run = await deps.run(['--api-url', site, '--json', ...fix.argv.slice(1)], {
-        timeoutMs: FIX_TIMEOUT_MS
-      })
+      const args = fixArgs(fix, site)
+      if (args === null)
+        throw new ArtefactRefusal(`Slideless offers ${site} a fix that names another site.`)
+      const run = await deps.run(args, { timeoutMs: FIX_TIMEOUT_MS })
       if (run.code !== 0) throw new ArtefactRefusal(runFailure(run))
       return list({ check: false })
     },
     pasteKey: async (origin, key) => {
       gate()
+      // A key goes only to a site of this machine, as a fresh listing names it.
+      const profile = profileAt(await listed(), origin)
+      if (!profile) throw new ArtefactRefusal(notASite(origin))
       const run = await deps.run(
-        ['--api-url', normalOrigin(origin), '--json', 'login', '--api-key-stdin'],
+        ['--api-url', normalOrigin(profile.site.origin), '--json', 'login', '--api-key-stdin'],
         { input: `${key}\n`, timeoutMs: KEY_TIMEOUT_MS }
       )
       if (run.code !== 0)

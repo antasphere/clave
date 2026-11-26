@@ -5,6 +5,7 @@ import { SlidelessSettings } from './slideless-settings'
 import {
   ADDRESS_FIRST,
   createSlidelessSignIns,
+  HUB_ADDRESS,
   NO_CODE_SIGN_IN,
   NO_QUESTION,
   PICK_A_HUB,
@@ -39,10 +40,6 @@ import {
 const hubLogin = { kind: 'hub_login', argv: ['slideless', '--profile', 'decks', 'login'] }
 const emailCode = { kind: 'email_code', argv: ['slideless', '--profile', 'local', 'login'] }
 const pickHub = { kind: 'pick_hub', argv: ['slideless', '--api-url', CLOUD, 'login', '--hub'] }
-const pickLogin = {
-  kind: 'pick_login',
-  argv: ['slideless', '--api-url', CLOUD, 'login', '--email']
-}
 const SENT =
   'A sign-in code was sent to someone@example.test (if that Antasphere account can receive mail).'
 const CODE = '424242'
@@ -173,7 +170,7 @@ describe('starting a sign-in', () => {
     expect(await failed).toMatchObject({
       origin: LOCAL,
       phase: 'failed',
-      message: 'Error: this site is not reachable'
+      message: 'this site is not reachable'
     })
   })
 
@@ -206,14 +203,19 @@ describe('starting a sign-in', () => {
     }
   })
 
-  it('takes the hub a pick asks for, among the machine’s logins, and the address a pick of a login asks for', async () => {
+  it('takes the hub a pick asks for, and the address a pick of a login asks for', async () => {
+    const pickLocalLogin = {
+      kind: 'pick_login',
+      argv: ['slideless', '--api-url', LOCAL, 'login', '--email']
+    }
     const s = setup(
-      [listedProfile(CLOUD, pickHub), listedProfile(LOCAL, pickLogin, 'local')],
+      [listedProfile(CLOUD, pickHub), listedProfile(LOCAL, pickLocalLogin, 'local')],
       [{ hub: HUB, email: 'someone@example.test', name: 'hub' }]
     )
     expect(await refusal(s.signIns.start(CLOUD, {}))).toBe(`ArtefactRefusal: ${PICK_A_HUB}`)
-    expect(await refusal(s.signIns.start(CLOUD, { hub: 'https://other.example.test' }))).toBe(
-      "ArtefactRefusal: https://other.example.test is not one of this machine's logins."
+    // A hub is an address, never an option of the command.
+    expect(await refusal(s.signIns.start(CLOUD, { hub: '--api-key=x' }))).toBe(
+      `ArtefactRefusal: ${HUB_ADDRESS}`
     )
     expect(await refusal(s.signIns.start(LOCAL, {}))).toBe(`ArtefactRefusal: ${ADDRESS_FIRST}`)
     expect(s.started()).toEqual([])
@@ -224,12 +226,37 @@ describe('starting a sign-in', () => {
       LOCAL,
       '--json',
       '--api-url',
-      CLOUD,
+      LOCAL,
       'login',
       '--email',
       'someone@example.test'
     ])
+    // The machine holds no login at the hub the site needs: the hub the person types.
+    void s.signIns.start(CLOUD, { hub: 'https://other.example.test/' })
+    await flush()
+    expect(s.started()[1]!.args).toEqual([
+      '--api-url',
+      CLOUD,
+      '--json',
+      '--api-url',
+      CLOUD,
+      'login',
+      '--hub',
+      'https://other.example.test'
+    ])
     s.signIns.stop()
+  })
+
+  it('refuses a fix that names another site than its own row, and starts nothing', async () => {
+    const elsewhere = {
+      kind: 'hub_login',
+      argv: ['slideless', '--api-url', 'https://elsewhere.example.test', 'login']
+    }
+    const s = setup([listedProfile(CLOUD, elsewhere)])
+    expect(await refusal(s.signIns.start(CLOUD, { email: 'someone@example.test' }))).toBe(
+      `ArtefactRefusal: ${NO_CODE_SIGN_IN}`
+    )
+    expect(s.started()).toEqual([])
   })
 
   it('refuses a site that does not sign in with a code, or is not the machine’s, and starts nothing', async () => {
@@ -278,7 +305,7 @@ describe('answering a sign-in', () => {
     const failed = await answering
     expect(failed).toMatchObject({
       phase: 'failed',
-      message: 'Error: the code is not valid or has expired'
+      message: 'the code is not valid or has expired'
     })
     expect(JSON.stringify(failed)).not.toContain(CODE)
     for (const spy of said) expect(spy).not.toHaveBeenCalled()

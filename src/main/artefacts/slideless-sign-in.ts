@@ -20,8 +20,8 @@ import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { SlidelessAccounts, SlidelessSignIn } from '@clave/contract/artefacts'
 import { ArtefactRefusal } from './refusal'
-import { notASite, profileAt, SIGN_IN_KINDS } from './slideless-accounts'
-import { firstLine } from './slideless-json'
+import { fixArgs, notASite, profileAt, SIGN_IN_KINDS } from './slideless-accounts'
+import { errorLine } from './slideless-json'
 import { normalOrigin } from './slideless-settings'
 
 /** How long a start waits for the command's question. */
@@ -37,6 +37,17 @@ export const NO_QUESTION = 'Slideless asked for no code in time: start the sign-
 export const NO_END = 'Slideless did not finish the sign-in in time: start it again.'
 export const NO_CODE_SIGN_IN = 'This site does not sign in with an e-mail code now.'
 export const PICK_A_HUB = 'Choose the hub to sign in through.'
+export const HUB_ADDRESS = "A hub's address starts with https://."
+
+/** An http(s) address: what a hub or a site is, and never a command line option. */
+export const isWebAddress = (value: string): boolean => {
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
 
 /** The sign-ins that ended, kept for an answer that comes after their end. */
 const ENDED_KEPT = 20
@@ -94,9 +105,9 @@ const questionOf = (said: string): string | null => {
   return tail.trim()
 }
 
-/** Its first error line, or how it ended. */
+/** Its `Error:` line, else its first error line, or how it ended. */
 const failureOf = (said: string, code: number | null): string =>
-  firstLine(said) || `Slideless stopped with exit code ${code ?? 'none'}.`
+  errorLine(said) || `Slideless stopped with exit code ${code ?? 'none'}.`
 
 export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
   const newId = deps.newId ?? randomUUID
@@ -174,12 +185,15 @@ export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
         throw new ArtefactRefusal(NO_CODE_SIGN_IN)
       const email = options.email?.trim() || undefined
       // The fix's own command line, as the listing wrote it, after the global options.
-      const args = ['--api-url', site, '--json', ...fix.argv.slice(1)]
+      const args = fixArgs(fix, site)
+      if (args === null) throw new ArtefactRefusal(NO_CODE_SIGN_IN)
       if (fix.kind === 'pick_hub') {
         const hub = options.hub?.trim()
         if (!hub) throw new ArtefactRefusal(PICK_A_HUB)
-        if (!accounts.logins.some((login) => normalOrigin(login.hub) === normalOrigin(hub)))
-          throw new ArtefactRefusal(`${normalOrigin(hub)} is not one of this machine's logins.`)
+        // One of the machine's logins, or a hub the person types when the
+        // machine holds none for this site (the command then signs in there
+        // with its e-mail code): an http(s) address, never an option.
+        if (!isWebAddress(hub)) throw new ArtefactRefusal(HUB_ADDRESS)
         if (fix.argv.at(-1) !== '--hub') throw new ArtefactRefusal(NO_CODE_SIGN_IN)
         args.push(normalOrigin(hub))
       } else if (fix.kind === 'pick_login') {

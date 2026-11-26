@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as publisher from '../routines/publisher'
 import {
+  errorLine,
   firstLine,
   isGone,
   parseJsonOutput,
@@ -64,5 +65,14 @@ describe('the readers of the command’s answers', () => {
     expect(isGone({ code: null, stderr: 'not found' })).toBe(false)
     expect(firstLine('\n\n  Error: first  \nsecond')).toBe('Error: first')
     expect(firstLine('x'.repeat(400))).toHaveLength(300)
+  })
+
+  it('say why a command failed by its `Error:` line, past a notice that it is older than its site', () => {
+    const notice = 'This slideless (0.15.0) is older than https://decks.example.test (0.15.1).'
+    expect(errorLine(`${notice}\nError: the key was refused\n`)).toBe('the key was refused')
+    expect(errorLine('\n  error:   lower case too \n')).toBe('lower case too')
+    expect(errorLine('a refusal with no prefix\nsecond')).toBe('a refusal with no prefix')
+    expect(errorLine('')).toBe('')
+    expect(errorLine(`Error: ${'x'.repeat(400)}`)).toHaveLength(300)
   })
 })

@@ -310,7 +310,9 @@ export function createArtefactShare(deps: ShareDeps): ArtefactShare {
           ['--api-url', record.site, '--json', 'unshare', record.deckId, '--token', tokenId],
           { timeoutMs: UNSHARE_TIMEOUT_MS }
         )
-        if (run.code !== 0)
+        // A link the site no longer has (revoked on Slideless, or its deck deleted)
+        // is gone either way: it leaves the record rather than stay as a dead row.
+        if (run.code !== 0 && !isGone(run))
           throw new ArtefactRefusal(`Slideless did not revoke the link: ${runFailure(run)}`)
         return view(artefact, deps.decks.removeLink(artefact.target, tokenId) ?? record, null)
       })

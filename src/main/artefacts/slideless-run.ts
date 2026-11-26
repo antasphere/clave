@@ -16,7 +16,7 @@
  */
 import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import type { ResolvedCli } from './slideless-cli'
-import { firstLine } from './slideless-json'
+import { errorLine } from './slideless-json'
 
 /** The output kept of a run: its last 64 KB. */
 export const STDOUT_LIMIT = 64 * 1024
@@ -65,10 +65,10 @@ export function startSlideless(
   })
 }
 
-/** Why a run failed, in the command's words: its first error line, or what ended it. */
+/** Why a run failed, in the command's words: its `Error:` line, else its first error line, or what ended it. */
 export function runFailure(run: SlidelessRun): string {
   if (run.timedOut) return 'Slideless did not answer in time.'
-  return firstLine(run.stderr) || `Slideless stopped with exit code ${run.code ?? 'none'}.`
+  return errorLine(run.stderr) || `Slideless stopped with exit code ${run.code ?? 'none'}.`
 }
 
 /** A sentence with a secret the person gave (a key, a code, a password)

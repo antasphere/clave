@@ -412,7 +412,7 @@ describe('making a link', () => {
       await refusal(
         s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
       )
-    ).toBe('ArtefactRefusal: Slideless did not push the page: Error: the key was refused')
+    ).toBe('ArtefactRefusal: Slideless did not push the page: the key was refused')
     expect(await s.share.deck('s1', s.folder)).toMatchObject({ deckId: null, links: [] })
   })
 
@@ -488,7 +488,7 @@ describe('making a link', () => {
       })
     )
     expect(refused).toBe(
-      'ArtefactRefusal: The page is on the site as version 1, but the link was not made: Error: the password [hidden] is too common'
+      'ArtefactRefusal: The page is on the site as version 1, but the link was not made: the password [hidden] is too common'
     )
     // The push is recorded; no link is.
     expect(await s.share.deck('s1', s.folder)).toMatchObject({
@@ -565,9 +565,25 @@ describe('revoking a link', () => {
     await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
     refuse = true
     expect(await refusal(s.share.revoke('s1', s.folder, 't1'))).toBe(
-      'ArtefactRefusal: Slideless did not revoke the link: Error: the site is not reachable'
+      'ArtefactRefusal: Slideless did not revoke the link: the site is not reachable'
     )
     expect((await s.share.deck('s1', s.folder)).links).toHaveLength(1)
+  })
+
+  it('lets go of a link the site no longer has: revoked on Slideless, or its deck deleted', async () => {
+    let gone = false
+    const s = setup({
+      override: (args, child) => {
+        if (!gone || !args.includes('unshare')) return false
+        answer('', 1, 'Error: not_found: no such share token\n')(child)
+        return true
+      }
+    })
+    await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
+    gone = true
+    const deck = await s.share.revoke('s1', s.folder, 't1')
+    expect(deck.links).toEqual([])
+    expect((await s.share.deck('s1', s.folder)).links).toEqual([])
   })
 })
 

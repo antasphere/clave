@@ -7,6 +7,7 @@ import {
   LIST_TIMEOUT_MS,
   NO_LISTING,
   parseListing,
+  SITE_ADDRESS,
   type SlidelessAccountsService
 } from './slideless-accounts'
 import { SlidelessSettings } from './slideless-settings'
@@ -260,7 +261,7 @@ describe('the listing', () => {
       settings
     })
     expect(await accounts.list({ check: false })).toMatchObject({
-      error: 'Error: the configuration cannot be read',
+      error: 'the configuration cannot be read',
       needsUpdate: false,
       profiles: []
     })
@@ -286,11 +287,23 @@ describe('adding a site', () => {
       other: (_args, child) => answer('', 1, 'Error: that address is no Slideless site\n')(child)
     })
     expect(await refusal(s.accounts.addSite('https://nowhere.example.test'))).toBe(
-      'ArtefactRefusal: Error: that address is no Slideless site'
+      'ArtefactRefusal: that address is no Slideless site'
     )
     const old = setup({ version: '0.14.1' })
     expect(await refusal(old.accounts.addSite(CLOUD))).toContain('accounts need 0.15.0')
     expect(old.slideless.calls).toEqual([])
+  })
+
+  it('takes an http(s) address only: an option or a word is refused before anything runs', async () => {
+    const s = setup()
+    for (const url of [
+      '--help',
+      '--api-url=https://x.example.test',
+      'decks.example.test',
+      'file:///etc'
+    ])
+      expect(await refusal(s.accounts.addSite(url))).toBe(`ArtefactRefusal: ${SITE_ADDRESS}`)
+    expect(s.slideless.calls).toEqual([])
   })
 })
 
@@ -368,38 +381,73 @@ describe('a fix', () => {
     ])
   })
 
-  it('says the command’s first error line when the removal fails', async () => {
+  it('says the command’s error line when the removal fails, past a notice that the command is older than its site', async () => {
     const s = setup({
       profiles: [profile(LOCAL, remove, 'local')],
-      other: (_args, child) => answer('', 2, 'Error: the profile is in use\n')(child)
+      other: (_args, child) =>
+        answer(
+          '',
+          2,
+          'This slideless (0.15.0) is older than http://127.0.0.1:3400 (0.15.1).\nError: the profile is in use\n'
+        )(child)
     })
     expect(await refusal(s.accounts.runFix(LOCAL, 'remove_profile'))).toBe(
-      'ArtefactRefusal: Error: the profile is in use'
+      'ArtefactRefusal: the profile is in use'
     )
+  })
+
+  it('refuses a fix that names another site than its own row, and runs nothing', async () => {
+    const elsewhere = {
+      kind: 'remove_profile',
+      argv: [
+        'slideless',
+        '--api-url',
+        'https://elsewhere.example.test',
+        'profiles',
+        'remove',
+        'local'
+      ]
+    }
+    const s = setup({ profiles: [profile(LOCAL, elsewhere, 'local')] })
+    expect(await refusal(s.accounts.runFix(LOCAL, 'remove_profile'))).toBe(
+      `ArtefactRefusal: Slideless offers ${LOCAL} a fix that names another site.`
+    )
+    expect(s.slideless.argv()).toEqual([['--json', 'profiles']])
   })
 })
 
 describe('a pasted key', () => {
   it('goes to `login --api-key-stdin` on its input, never on its command line, then lists', async () => {
-    const s = setup()
+    const s = setup({ profiles: [profile(DECKS), profile(LOCAL, null, 'local')] })
     await s.accounts.pasteKey(`${LOCAL}/`, 'slk_pasted_secret')
-    const [login] = s.slideless.calls
+    const [listing, login, after] = s.slideless.calls
+    expect(listing!.args).toEqual(['--json', 'profiles'])
     expect(login!.args).toEqual(['--api-url', LOCAL, '--json', 'login', '--api-key-stdin'])
     expect(login!.child.stdin.written).toBe('slk_pasted_secret\n')
     expect(login!.child.stdin.ended).toBe(true)
-    expect(s.slideless.argv()[1]).toEqual(['--json', 'profiles'])
+    expect(after!.args).toEqual(['--json', 'profiles'])
     for (const call of s.slideless.calls) expect(call.args.join(' ')).not.toContain('slk_pasted')
+  })
+
+  it('goes only to a site of the machine: another origin is refused before the key goes anywhere', async () => {
+    const s = setup({ profiles: [profile(DECKS)] })
+    expect(await refusal(s.accounts.pasteKey(LOCAL, 'slk_pasted_secret'))).toBe(
+      `ArtefactRefusal: ${LOCAL} is not one of this machine's Slideless sites.`
+    )
+    expect(s.slideless.argv()).toEqual([['--json', 'profiles']])
+    expect(s.slideless.calls[0]!.child.stdin.written).toBe('')
   })
 
   it('is refused with the command’s words, never with the key, and logs nothing', async () => {
     const said = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error')]
     const s = setup({
+      profiles: [profile(DECKS), profile(LOCAL, null, 'local')],
       other: (_args, child) =>
         answer('', 1, 'Error: slk_pasted_secret is not a key of this site\n')(child)
     })
     const refused = await refusal(s.accounts.pasteKey(LOCAL, 'slk_pasted_secret'))
     expect(refused).toBe(
-      'ArtefactRefusal: Slideless did not take the key: Error: [hidden] is not a key of this site'
+      'ArtefactRefusal: Slideless did not take the key: [hidden] is not a key of this site'
     )
     expect(refused).not.toContain('slk_pasted_secret')
     for (const spy of said) expect(spy).not.toHaveBeenCalled()
