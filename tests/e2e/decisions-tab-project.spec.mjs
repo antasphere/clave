@@ -38,7 +38,10 @@
  *     tab's transcript moved while the app was down. Run it attached too
  *     (`CLAVE_E2E_SERVER=attached`), where the tabs come back after the boot;
  * 13. an agent's group (`clave_create_group`, `clave_move_session`) keeps the
- *     name it was given, and nothing is asked for it.
+ *     name it was given, and nothing is asked for it;
+ * 14. an agent's rename (`clave_rename`) of a person's group Clave named makes
+ *     the name the agent's in every mode (in-process it lands on the server's
+ *     layout): a tab dragged in after moves nothing and asks nothing.
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
@@ -641,6 +644,40 @@ export async function run(t) {
     t.equal('13. its name is the one it was given', await shownName(win, groupId), 'Agent quill')
     t.check('13. it is not a person’s group', moved?.autoNamed === false, moved)
     t.equal('13. and no request was sent for it', asked() - before13, 0)
+
+    // ── 14. An agent's rename makes the name theirs ──
+    // In-process the agent's `clave_rename` lands on the server's layout, in
+    // the other modes on the window's: either way the group leaves Clave's
+    // naming, and a tab dragged in after asks nothing.
+    const r1 = await openTab(app, win, 'Quill ten', P('quill'), SAY.quill(10))
+    const r2 = await openTab(app, win, 'Quill eleven', P('quill'), SAY.quill(11))
+    const g14 = await groupByKeymap(win, [r1.id, r2.id])
+    t.equal('14. Clave names a person’s group first', await waitName(win, g14.id, 'Quill'), 'Quill')
+    await call(agent, 'clave_rename', { target: 'group', id: g14.id, name: 'Agent picked' })
+    t.equal(
+      `14. [${MODE}] an agent renames it with clave_rename`,
+      await waitName(win, g14.id, 'Agent picked'),
+      'Agent picked'
+    )
+    const left14 = await until(async () =>
+      (await groupsNow(win)).find((g) => g.id === g14.id)?.autoNamed === false ? true : null
+    )
+    t.check(
+      `14. [${MODE}] and the group leaves Clave’s naming`,
+      left14 === true,
+      (await groupsNow(win)).find((g) => g.id === g14.id)
+    )
+    const a4 = await openTab(app, win, 'Atlas four', P('atlas'), SAY.atlas(4))
+    const before14 = asked()
+    await dragInto(win, a4.id, g14.id)
+    t.equal('14. an Atlas tab dragged into it joins it', (await groupOfTab(win, a4.id))?.id, g14.id)
+    await win.waitForTimeout(SETTLE_MS)
+    t.equal(
+      `14. [${MODE}] the name stays the agent’s`,
+      await shownName(win, g14.id),
+      'Agent picked'
+    )
+    t.equal(`14. [${MODE}] and no request reached the stub`, asked() - before14, 0)
 
     t.equal('no page error', errors.join(' | '), '')
   } finally {
