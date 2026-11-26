@@ -103,6 +103,13 @@ const POSIX = String.raw`${START}(?<posix>/+${PART}(?:/+${PART})+/*)`
 const HOME_SEGMENT = String.raw`(?<![A-Za-z0-9.-])[\\/](?:Users|home)[\\/]+${WINDOWS_PART}`
 /** The rest of a path after a home folder, on either separator (rule 6). */
 const HOME_REST = String.raw`(?:[\\/]+${WINDOWS_PART})*[\\/]*`
+/** The same segment percent-encoded, as a log line or a query string writes
+ *  a path (`%2FUsers%2Fada%2F…`): standing outside a link, rule 4 never sees
+ *  it, so rule 6 takes it too. Its separators in either case of hex. */
+const ENCODED_SEP = '%2[Ff]'
+const ENCODED_PART = String.raw`(?:(?!${ENCODED_SEP})[^\s"'<>\`()\[\]{}])+`
+const ENCODED_HOME_SEGMENT = String.raw`(?<![A-Za-z0-9.-])${ENCODED_SEP}(?:Users|home)${ENCODED_SEP}${ENCODED_PART}`
+const ENCODED_REST = String.raw`(?:${ENCODED_SEP}(?:(?!${ENCODED_SEP})[^\s"'<>\`()\[\]{}])*)*`
 /** A name that goes on past the home folder's own (`/srv/adam` is not the
  *  home `/srv/ada`). */
 const NAME_GOES_ON = String.raw`[A-Za-z0-9_-]`
@@ -210,7 +217,8 @@ export function scrubPaths(text: string, context: ScrubContext): string {
 /** Rule 6, the last: any occurrence left of the home folder, wherever it
  *  stands, and any home folder's segment outside a relative path, becomes
  *  `<path>` with the rest of its path, so the person's name never leaves
- *  whatever a start of the rules before missed. Pure. */
+ *  whatever a start of the rules before missed; percent-encoded too
+ *  (`%2FUsers%2Fada%2F…`). Pure. */
 export function scrubHomes(text: string, context: ScrubContext): string {
   const home = context.home.replace(/[\\/]+$/, '')
   const forms = [HOME_SEGMENT]
@@ -218,7 +226,14 @@ export function scrubHomes(text: string, context: ScrubContext): string {
   if (home.length > 1 && /^(?:[A-Za-z]:)?[\\/]/.test(home))
     forms.push(String.raw`${escapeRegExp(home)}(?!${NAME_GOES_ON})`)
   const pattern = new RegExp(String.raw`(?:${forms.join('|')})${HOME_REST}`, 'g')
-  return text.replace(pattern, (whole: string) => `${PATH_MARK}${splitTrailing(whole)[1]}`)
+  const encodedForms = [ENCODED_HOME_SEGMENT]
+  if (home.length > 1 && home.startsWith('/'))
+    encodedForms.push(
+      String.raw`${escapeRegExp(encodeURIComponent(home)).replace(/%2F/g, ENCODED_SEP)}(?!${NAME_GOES_ON})`
+    )
+  const encoded = new RegExp(String.raw`(?:${encodedForms.join('|')})${ENCODED_REST}`, 'g')
+  const mark = (whole: string): string => `${PATH_MARK}${splitTrailing(whole)[1]}`
+  return text.replace(pattern, mark).replace(encoded, mark)
 }
 
 /** Every rule, in order: the paths and the links, then JWT, e-mail, token,

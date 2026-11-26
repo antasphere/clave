@@ -343,3 +343,25 @@ describe('scrubText', () => {
     )
   })
 })
+
+describe('rule 6, percent-encoded', () => {
+  const ctx = { workspaceRoot: '/Users/ada/w', home: '/Users/ada' }
+
+  it('takes an encoded home path standing outside a link, in either case of hex', () => {
+    expect(scrubText('encoded %2FUsers%2Fada%2FClients%2FAcmeCorp, read it', ctx)).toBe(
+      'encoded <path>, read it'
+    )
+    expect(scrubText('see %2fUsers%2fada%2fnotes.md', ctx)).toBe('see <path>')
+    expect(scrubText('log: %2Fhome%2Flumen%2Fbuild.log.', ctx)).toBe('log: <path>.')
+  })
+
+  it('takes the home folder itself encoded, wherever it is', () => {
+    const elsewhere = { workspaceRoot: '/srv/w', home: '/var/ada' }
+    expect(scrubText('cache %2Fvar%2Fada%2F.cache%2Fx here', elsewhere)).toBe('cache <path> here')
+    expect(scrubText('not mine %2Fvar%2Fadam%2Fx', elsewhere)).toBe('not mine %2Fvar%2Fadam%2Fx')
+  })
+
+  it('leaves an encoded slash that is no home alone', () => {
+    expect(scrubText('ratio 100%2F3 and a%2Fb', ctx)).toBe('ratio 100%2F3 and a%2Fb')
+  })
+})
