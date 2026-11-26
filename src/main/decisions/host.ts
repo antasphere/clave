@@ -221,6 +221,8 @@ export function hostDecisions(options: HostDecisionsOptions): HostDecisions {
     try {
       return await flight
     } finally {
+      // Ended, read or failed: the next call on this basis asks again (a
+      // failure kept here would answer every later call on it).
       if (inFlight.get(flightKey) === flight) inFlight.delete(flightKey)
     }
   }

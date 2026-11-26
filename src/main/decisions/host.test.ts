@@ -228,6 +228,35 @@ describe('a tab read on the host', () => {
     expect(s.written).toHaveLength(1)
   })
 
+  it('a reading that has ended is no longer waited for: after a failed request, the next call on the same basis asks again', async () => {
+    const s = setup(
+      { a: claudeTab() },
+      {
+        outcome: () =>
+          s.runs.length === 1
+            ? { ok: false, reason: 'unreachable', detail: 'TypeSafe could not be reached.' }
+            : { ok: true, value: decided, model: 'jev-1.14.0', ms: 220, inputTokens: 900 }
+      }
+    )
+    expect(await s.host.readTabProjects(['a'])).toEqual([
+      { sessionId: 'a', projects: null, reason: 'unreachable', written: false }
+    ])
+    const [second] = await s.host.readTabProjects(['a'])
+    const reading: TabProjects = {
+      status: 'decided',
+      picks: decided.picks,
+      fits: 0.93,
+      readAt: 5_000,
+      model: 'jev-1.14.0',
+      basis: basisFor([quill, atlas])
+    }
+    // Two requests on one basis: the second call asked again and got it.
+    expect(s.runs).toHaveLength(2)
+    expect(s.runs[1]).toEqual(s.runs[0])
+    expect(second).toEqual({ sessionId: 'a', projects: reading, written: true })
+    expect(s.written).toEqual([['a', reading]])
+  })
+
   it('a failure leaves the record as it was and answers its old reading with the reason', async () => {
     const held: TabProjects = {
       status: 'decided',
