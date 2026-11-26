@@ -24,8 +24,11 @@ const BEFORE = [
   String.fromCharCode(0xa0)
 ]
 /** What a path never starts after: inside a word, a number or a path. (A
- *  `~` right before a `/` makes a path of its own, in the home folder.) */
+ *  `~` right before a `/` makes a path of its own, in the home folder, and
+ *  a `/` one that opens with two slashes.) */
 const INSIDE = /^[A-Za-z0-9/.-]$/
+/** The characters before a `/` that make a path of their own with it. */
+const OWN = new Set(['~', '/'])
 
 describe('clip', () => {
   it('collapses whitespace and cuts with a final ellipsis, the ellipsis counted', () => {
@@ -110,6 +113,20 @@ describe('scrubText', () => {
     )
   })
 
+  it('3. a path may open with several slashes', () => {
+    expect(scrubText('//srv/a/b', context)).toBe('<path>')
+    expect(scrubText('see //srv/tern/brief.pdf, and ///srv/tern/notes now', context)).toBe(
+      'see <path>, and <path> now'
+    )
+    // A comment, a lone `//` and a link are no path: the link rule takes a
+    // link first, its doubled slashes with it.
+    for (const text of ['// a comment', '//', 'a lone // here', 'x = 1 // see a/b'])
+      expect(scrubText(text, context)).toBe(text)
+    expect(
+      scrubText('https://atlas.example.com//srv/a/b and https://lumen.example/', context)
+    ).toBe('https://atlas.example.com/… and https://lumen.example/')
+  })
+
   it('3. a path is cut at a space: what follows the space stays', () => {
     expect(scrubPaths('Saved to /Volumes/Ada Backup/tern-contract.pdf', context)).toBe(
       'Saved to <path> Backup/tern-contract.pdf'
@@ -137,7 +154,7 @@ describe('scrubText', () => {
     expect(BEFORE).toHaveLength(95 + 10)
     for (const c of BEFORE) {
       const text = `see ${c}/srv/tern/x.pdf now`
-      const expected = c === '~' ? 'see <path> now' : INSIDE.test(c) ? text : `see ${c}<path> now`
+      const expected = OWN.has(c) ? 'see <path> now' : INSIDE.test(c) ? text : `see ${c}<path> now`
       expect(scrubText(text, context), JSON.stringify(c)).toBe(expected)
     }
   })
@@ -242,7 +259,7 @@ describe('scrubText', () => {
       const out = scrubText(`see ${c}/Users/ada/Clients/x.pdf now`, context)
       expect(out, JSON.stringify(c)).not.toContain('ada')
       // Every character but the path's own is kept.
-      expect(out, JSON.stringify(c)).toBe(c === '~' ? 'see <path> now' : `see ${c}<path> now`)
+      expect(out, JSON.stringify(c)).toBe(OWN.has(c) ? 'see <path> now' : `see ${c}<path> now`)
     }
   })
 

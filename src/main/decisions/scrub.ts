@@ -15,16 +15,17 @@
  * 3. any other absolute path becomes `<path>`. The home folder is outside
  *    the workspace, so nothing of it leaves either (a `~/…` path is read from
  *    it, by rules 1 and 3; a `~name/…` path, another account's home as far
- *    as the scrub can tell, is `<path>`). On POSIX, a path is a `/` followed
- *    by at least two components (`/a/b`); on Windows, `X:\` or `X:/` followed
- *    by a component. A path, the workspace's root of rule 1 included, starts
- *    at its first character unless that character follows a letter, a digit,
- *    `/`, `.`, `-` or `~`, that is unless it sits inside a word, a number or
- *    another path: after a space, a quote of any kind, `@`, `**`, `_`, `!`,
- *    `→` or any other character, it is taken. So a slash command (`/clear`,
- *    `/exos:lane clave 42`), a fraction, a date (`11/25/2026`), « and/or »,
- *    `./a/b`, `../a/b` and a link's own path (the link is found first) are
- *    never taken;
+ *    as the scrub can tell, is `<path>`). On POSIX, a path is one `/` or
+ *    more followed by at least two components (`/a/b`, `//srv/a/b`), so a
+ *    comment's `// …` and a lone `//` are none; on Windows, `X:\` or `X:/`
+ *    followed by a component. A path, the workspace's root of rule 1
+ *    included, starts at its first character unless that character follows
+ *    a letter, a digit, `/`, `.`, `-` or `~`, that is unless it sits inside a
+ *    word, a number or another path: after a space, a quote of any kind,
+ *    `@`, `**`, `_`, `!`, `→` or any other character, it is taken. So a
+ *    slash command (`/clear`, `/exos:lane clave 42`), a fraction, a date
+ *    (`11/25/2026`), « and/or », `./a/b`, `../a/b` and a link's own path
+ *    (the link is found first) are never taken;
  * 4. a link keeps its scheme and its host (and port) and loses its user, its
  *    password and everything after the host (`http://localhost:8080/…`); a
  *    link with nothing after its host is left as it is;
@@ -90,7 +91,8 @@ const LINK = String.raw`(?<![A-Za-z0-9+.-])(?<scheme>[A-Za-z][A-Za-z0-9+.-]*):\/
 const WINDOWS = String.raw`${START}(?<windows>[A-Za-z]:[\\/]+${WINDOWS_PART}(?:[\\/]+${WINDOWS_PART})*[\\/]*)`
 /** `~/…`, or `~name/…`: the home of the account `name`. */
 const TILDE = String.raw`${START}~(?<user>[A-Za-z_][\w.-]*)?(?<tilde>(?:/+${PART})+/*)`
-const POSIX = String.raw`${START}(?<posix>/${PART}(?:/+${PART})+/*)`
+/** One `/` or more, then at least two components: `//srv/a/b` is a path. */
+const POSIX = String.raw`${START}(?<posix>/+${PART}(?:/+${PART})+/*)`
 
 /** A home folder's segment as the systems write it (rule 6): `/Users/<name>`,
  *  `/home/<name>`, and the same with `\` (`C:\Users\<name>`, a WSL home),
