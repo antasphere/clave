@@ -167,3 +167,49 @@ describe('mergeLayouts', () => {
     expect(out.dropped).toEqual([])
   })
 })
+
+/**
+ * Clave's own name yields (PRDCT-5179): a name a person or an agent gave is
+ * theirs for good, so where the window's group is laid over the server's, a
+ * name Clave gave (`autoNamed`) never overwrites one somebody gave there.
+ */
+describe('mergeLayouts and the name Clave gave', () => {
+  type Named = G & { autoNamed?: boolean }
+  const clave = (group: G): Named => ({ ...group, autoNamed: true })
+
+  it('Clave’s name yields to an agent’s rename the server took first, whatever else the window changed', () => {
+    // The window named its person's group « Quill » and took a tab in; the
+    // agent's clave_rename reached the server before that save, and took
+    // the flag off there: the save was refused and is re-applied.
+    const base = L([clave(g('p', ['s1'], 'Group 3'))], ['p'])
+    const local = L([clave(g('p', ['s1', 's2'], 'Quill'))], ['p'])
+    const server = L([g('p', ['s1'], 'Agent picked')], ['p'])
+    const out = mergeLayouts<Named>(base, local, server)
+    expect(out.groups).toEqual([g('p', ['s1', 's2'], 'Agent picked')])
+    expect('autoNamed' in out.groups[0]).toBe(false)
+    expect(out.dropped).toEqual([])
+  })
+
+  it('Clave’s name yields too when the window holds the group as its own addition', () => {
+    // No base holds it: the window's group is kept, but not its Clave name
+    // over the one somebody gave the server's group of the same id.
+    const local = L([clave(g('p', ['s1', 's2'], 'Quill'))], ['p'])
+    const server = L([g('p', ['s1'], 'Agent picked')], ['p'])
+    const out = mergeLayouts<Named>(L([], []), local, server)
+    expect(out.groups).toEqual([g('p', ['s1', 's2'], 'Agent picked')])
+    expect('autoNamed' in out.groups[0]).toBe(false)
+  })
+
+  it('a person’s rename on the window still wins over the server’s Clave name, as before', () => {
+    const base = L([clave(g('p', ['s1'], 'Group 3'))], ['p'])
+    const server = L([clave(g('p', ['s1'], 'Quill'))], ['p'])
+    const out = mergeLayouts<Named>(base, L([g('p', ['s1'], 'Ink and margins')], ['p']), server)
+    expect(out.groups).toEqual([g('p', ['s1'], 'Ink and margins')])
+    expect('autoNamed' in out.groups[0]).toBe(false)
+    // And Clave's name over Clave's is the window's newer one, as before.
+    const local = L([clave(g('p', ['s1'], 'Quill | Atlas'))], ['p'])
+    expect(mergeLayouts<Named>(base, local, server).groups).toEqual([
+      clave(g('p', ['s1'], 'Quill | Atlas'))
+    ])
+  })
+})

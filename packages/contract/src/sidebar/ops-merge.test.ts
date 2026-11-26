@@ -173,6 +173,31 @@ describe('mergeLayoutForKeys', () => {
     expect(out.displayOrder).toEqual(['shared'])
   })
 
+  it('the live copy wins save for Clave’s own name, which yields to the one the server’s copy was given (PRDCT-5179)', () => {
+    type Named = LayoutGroupLike & { name: string; autoNamed?: boolean }
+    /** The live copy holds two rows, the file's older copy one. */
+    const named = (sessionIds: string[], name: string, clave = false): Named => ({
+      ...g('shared', sessionIds),
+      name,
+      ...(clave ? { autoNamed: true } : {})
+    })
+    const take = (live: Named, saved: Named): Named[] =>
+      mergeLayoutForKeys<Named>(
+        { groups: [live], displayOrder: ['shared'], sessions: [s('o1'), s('o2')] },
+        [A],
+        { groups: [saved], displayOrder: ['shared'] },
+        ['o1', 'o2']
+      ).groups
+    // Clave named the live copy; somebody named the server's copy.
+    expect(take(named(['o1', 'o2'], 'Quill', true), named(['o1'], 'Agent picked'))).toEqual([
+      named(['o1', 'o2'], 'Agent picked')
+    ])
+    // A name somebody gave the live copy still wins over Clave's, as before.
+    expect(take(named(['o1', 'o2'], 'Ink and margins'), named(['o1'], 'Quill', true))).toEqual([
+      named(['o1', 'o2'], 'Ink and margins')
+    ])
+  })
+
   it('merging the NULL key does own unstamped groups (no-workspace boot)', () => {
     const out = mergeLayoutForKeys(
       { groups: [], displayOrder: [], sessions: [s('u1')] },
