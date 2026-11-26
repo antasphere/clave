@@ -51,7 +51,13 @@
  *
  * Roads 10 and 11 also regroup two tabs read EARLIER, whose records carry a
  * reading: the host's own check of the switch and of the key serves none.
+ *
+ * At the end, after the sweep, no session started under the run's fixture
+ * root is left on the shared tmux socket, whatever its name: the sweep takes
+ * only a session named for the suite, so a tab of the world that started in
+ * a folder of another name would outlive every run.
  */
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -65,6 +71,7 @@ import {
   toolErrored,
   until,
   fixturePath,
+  fixtureRoot,
   serverDataDirOf,
   serverMode,
   killLeakedE2eTmux
@@ -133,6 +140,37 @@ const seedFixture = world.seed
 const appendSaid = world.appendSaid
 const openTab = world.openTab
 const startStub = () => startJevStub({ good: GOOD, model: MODEL })
+
+/** The sessions on the app's socket started under this run's fixture root,
+ *  as `name|start path`: the root in its /tmp and its real form, as the
+ *  sweep's `leakedE2eSessions` scopes them, but WITHOUT its name rule. No
+ *  tmux, or no server on the socket, is none; any other failure to list is
+ *  an entry of its own, so the check cannot pass on a listing it never got. */
+function sessionsUnderRun() {
+  let rows
+  try {
+    rows = execFileSync(
+      'tmux',
+      ['-L', 'clave', 'list-sessions', '-F', '#{session_name}|#{session_path}'],
+      { encoding: 'utf-8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+  } catch (error) {
+    if (
+      error?.code === 'ENOENT' ||
+      /no server running|error connecting/.test(String(error?.stderr))
+    )
+      return []
+    return [`(the socket could not be listed: ${String(error?.message ?? error).split('\n')[0]})`]
+  }
+  const roots = [fixtureRoot(), fixtureRoot({ real: true })]
+  return rows
+    .split('\n')
+    .filter(Boolean)
+    .filter((row) => {
+      const start = row.slice(row.indexOf('|') + 1)
+      return roots.some((root) => start === root || start.startsWith(`${root}/`))
+    })
+}
 
 // ── The run ─────────────────────────────────────────────────────────────────
 
@@ -798,5 +836,11 @@ export async function run(t) {
     await stub.close()
     killLeakedE2eTmux()
     if (OWN_SERVER && MAC) keychain.remove()
+    const left = sessionsUnderRun()
+    t.check(
+      'after the sweep, no session started under the run’s fixture root is left on the socket',
+      left.length === 0,
+      { left: left.length, sessions: left }
+    )
   }
 }

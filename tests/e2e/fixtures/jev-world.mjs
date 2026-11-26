@@ -2,10 +2,12 @@
 // drive the real app on it: a workspace whose trusted `.clave` file declares
 // three invented projects (Quill, Atlas, Lumen), each a group with a folder
 // of its own and a prompt that says what it is; Claude Code tabs on a
-// stand-in `claude` that waits; their transcripts seeded where the app reads
-// one (`CLAVE_TRANSCRIPTS_ROOT`); a stub of TypeSafe that records what it
-// receives; and the window's roads a person takes (the Jev card, the switch,
-// selecting and grouping tabs, a rename by hand, a drag into a group).
+// stand-in `claude` that waits, each started in a folder named for the suite
+// so that the harness's sweep ends its tmux session (`openTab`); their
+// transcripts seeded where the app reads one (`CLAVE_TRANSCRIPTS_ROOT`); a
+// stub of TypeSafe that records what it receives; and the window's roads a
+// person takes (the Jev card, the switch, selecting and grouping tabs, a
+// rename by hand, a drag into a group).
 //
 // Shared by `decisions-tab-project.spec.mjs` (the stub),
 // `scripts/look-jev-surfaces.mjs` (the stub, for the screenshots) and
@@ -44,6 +46,13 @@ export const PROJECTS = [
       'Lumen is the photo library of a small studio: albums, the lightbox where a client picks prints, and the print orders.'
   }
 ]
+
+/** A tab's name as a folder's: `Quill one` → `quill-one`. */
+const slugOf = (name) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 
 /** A Quill tab's first message as it must leave the machine: the workspace's
  *  path relative, the path in a home folder dropped (`SAY.quill`). */
@@ -224,8 +233,16 @@ exec /bin/sh "$@"
     )
   }
 
-  /** A Claude Code tab on the stand-in, out of any group, and its transcript. */
-  async function openTab(app, win, tabName, cwd, say) {
+  /** A Claude Code tab on the stand-in, out of any group, and its transcript.
+   *  The tab starts in a folder of its own inside `folder` (its project's,
+   *  or the root), named for the suite: `clave-e2e-tab-<its name>`. The app
+   *  names a tab's tmux session after its folder, the session outlives the
+   *  app on the shared socket, and the harness's sweep takes only a session
+   *  named for the suite. A decision reads the tab's folder only to find its
+   *  transcript, which is filed under it: what it sends is the same. */
+  async function openTab(app, win, tabName, folder, say) {
+    const cwd = path.join(folder, `clave-e2e-tab-${slugOf(tabName)}`)
+    mkdirSync(cwd, { recursive: true })
     const opened = await callMcp(app, 'openSession', {
       cwd,
       mode: 'claude',
