@@ -36,7 +36,20 @@ const api = {
       phase: 'installing',
       version: null,
       error: null
-    })
+    }),
+    // PRDCT-4266
+    slidelessAccounts: recorded('slidelessAccounts', { profiles: [] }),
+    checkSlidelessAccounts: recorded('checkSlidelessAccounts', { checked: true }),
+    addSlidelessSite: recorded('addSlidelessSite', { profiles: [] }),
+    setNewLinksSite: recorded('setNewLinksSite', { newLinksSite: null }),
+    runSlidelessFix: recorded('runSlidelessFix', { profiles: [] }),
+    startSlidelessSignIn: recorded('startSlidelessSignIn', { phase: 'code_asked' }),
+    answerSlidelessSignIn: recorded('answerSlidelessSignIn', { phase: 'done' }),
+    cancelSlidelessSignIn: recorded('cancelSlidelessSignIn', undefined),
+    pasteSlidelessKey: recorded('pasteSlidelessKey', { profiles: [] }),
+    artefactDeck: recorded('artefactDeck', { deckId: 'd1' }),
+    shareArtefact: recorded('shareArtefact', { _tag: 'shared' }),
+    revokeArtefactLink: recorded('revokeArtefactLink', { links: [] })
   }
 } as unknown as ClaveApiClient
 
@@ -54,14 +67,75 @@ beforeEach(() => {
 describe('the artefacts over IPC', () => {
   it('registers one channel per member', () => {
     expect([...handlers.keys()].sort()).toEqual([
+      'artefacts:addSlidelessSite',
+      'artefacts:answerSlidelessSignIn',
+      'artefacts:artefactDeck',
+      'artefacts:cancelSlidelessSignIn',
+      'artefacts:checkSlidelessAccounts',
       'artefacts:close',
       'artefacts:hold',
       'artefacts:installSlideless',
       'artefacts:list',
+      'artefacts:pasteSlidelessKey',
       'artefacts:release',
+      'artefacts:revokeArtefactLink',
+      'artefacts:runSlidelessFix',
       'artefacts:saveVersion',
+      'artefacts:setNewLinksSite',
+      'artefacts:shareArtefact',
+      'artefacts:slidelessAccounts',
       'artefacts:slidelessState',
+      'artefacts:startSlidelessSignIn',
       'artefacts:versions'
+    ])
+  })
+
+  it('reaches the Slideless accounts and an artefact’s links with the window’s arguments (PRDCT-4266)', async () => {
+    const site = 'https://decks.example.test'
+    const settings = {
+      annotator: false,
+      forms: true,
+      download: true,
+      bar: true,
+      pdf: true,
+      pinVersion: true,
+      password: 'four'
+    }
+    await expect(invoke('artefacts:slidelessAccounts')).resolves.toEqual({ profiles: [] })
+    await invoke('artefacts:checkSlidelessAccounts')
+    await invoke('artefacts:addSlidelessSite', site)
+    await invoke('artefacts:setNewLinksSite', site)
+    await invoke('artefacts:setNewLinksSite', null)
+    await invoke('artefacts:setNewLinksSite', '')
+    await invoke('artefacts:runSlidelessFix', site, 'remove_profile')
+    await invoke('artefacts:startSlidelessSignIn', site, { email: 'someone@example.test' })
+    await invoke('artefacts:startSlidelessSignIn', site, { hub: 'https://hub.example.test' })
+    await invoke('artefacts:startSlidelessSignIn', site, undefined)
+    await invoke('artefacts:answerSlidelessSignIn', 'i1', '424242')
+    await invoke('artefacts:cancelSlidelessSignIn', 'i1')
+    await invoke('artefacts:pasteSlidelessKey', site, 'slk_pasted')
+    await expect(invoke('artefacts:artefactDeck', 's1', '/work/deck')).resolves.toEqual({
+      deckId: 'd1'
+    })
+    await invoke('artefacts:shareArtefact', 's1', '/work/deck', { site, link: settings })
+    await invoke('artefacts:revokeArtefactLink', 's1', '/work/deck', 't1')
+    expect(calls).toEqual([
+      { method: 'slidelessAccounts', args: [] },
+      { method: 'checkSlidelessAccounts', args: [] },
+      { method: 'addSlidelessSite', args: [site] },
+      { method: 'setNewLinksSite', args: [site] },
+      { method: 'setNewLinksSite', args: [null] },
+      { method: 'setNewLinksSite', args: [null] },
+      { method: 'runSlidelessFix', args: [site, 'remove_profile'] },
+      { method: 'startSlidelessSignIn', args: [site, { email: 'someone@example.test' }] },
+      { method: 'startSlidelessSignIn', args: [site, { hub: 'https://hub.example.test' }] },
+      { method: 'startSlidelessSignIn', args: [site, {}] },
+      { method: 'answerSlidelessSignIn', args: ['i1', '424242'] },
+      { method: 'cancelSlidelessSignIn', args: ['i1'] },
+      { method: 'pasteSlidelessKey', args: [site, 'slk_pasted'] },
+      { method: 'artefactDeck', args: ['s1', '/work/deck'] },
+      { method: 'shareArtefact', args: ['s1', '/work/deck', { site, link: settings }] },
+      { method: 'revokeArtefactLink', args: ['s1', '/work/deck', 't1'] }
     ])
   })
 

@@ -1517,6 +1517,16 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const releaseForward = (forward: ForwardOpened): void => {
     void ports.invoke('forwards:release', forward.key).catch(noop)
   }
+  /** A call about a machine's own Slideless (PRDCT-4474, PRDCT-4266): this Mac's
+   *  without a server id, else the server named, which is handed the arguments only. */
+  const onMachine = async <R>(
+    serverId: string | undefined,
+    mine: () => Promise<R>,
+    theirs: (api: Backing['api']) => Promise<R>
+  ): Promise<R> =>
+    serverId === undefined || serverId === LOCAL_SERVER_ID
+      ? mine()
+      : theirs((await backing(serverId)).api)
   const artefacts: ArtefactsAPI = {
     ...local.artefacts,
     list: async () => {
@@ -1661,6 +1671,80 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         eventListener('slideless.state_changed', (event, owner) =>
           cb({ serverId: owner, state: event.state })
         )
+      ),
+    // ── PRDCT-4266: the Slideless accounts of a machine ──
+    slidelessAccounts: (serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.slidelessAccounts(),
+        (api) => api.artefacts.slidelessAccounts()
+      ),
+    checkSlidelessAccounts: (serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.checkSlidelessAccounts(),
+        (api) => api.artefacts.checkSlidelessAccounts()
+      ),
+    addSlidelessSite: (url, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.addSlidelessSite(url),
+        (api) => api.artefacts.addSlidelessSite(url)
+      ),
+    setNewLinksSite: (origin, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.setNewLinksSite(origin),
+        (api) => api.artefacts.setNewLinksSite(origin)
+      ),
+    runSlidelessFix: (origin, kind, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.runSlidelessFix(origin, kind),
+        (api) => api.artefacts.runSlidelessFix(origin, kind)
+      ),
+    startSlidelessSignIn: (origin, options, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.startSlidelessSignIn(origin, options),
+        (api) => api.artefacts.startSlidelessSignIn(origin, options)
+      ),
+    answerSlidelessSignIn: (id, code, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.answerSlidelessSignIn(id, code),
+        (api) => api.artefacts.answerSlidelessSignIn(id, code)
+      ),
+    cancelSlidelessSignIn: (id, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.cancelSlidelessSignIn(id),
+        (api) => api.artefacts.cancelSlidelessSignIn(id)
+      ),
+    pasteSlidelessKey: (origin, key, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.pasteSlidelessKey(origin, key),
+        (api) => api.artefacts.pasteSlidelessKey(origin, key)
+      ),
+    // ── PRDCT-4266: an artefact's deck and its links, on the server the session runs on ──
+    artefactDeck: (id, target) =>
+      route(
+        id,
+        (wireId) => local.artefacts.artefactDeck(wireId, target),
+        (b, wireId) => b.api.artefacts.artefactDeck(wireId, target)
+      ),
+    shareArtefact: (id, target, request) =>
+      route(
+        id,
+        (wireId) => local.artefacts.shareArtefact(wireId, target, request),
+        (b, wireId) => b.api.artefacts.shareArtefact(wireId, target, request)
+      ),
+    revokeArtefactLink: (id, target, tokenId) =>
+      route(
+        id,
+        (wireId) => local.artefacts.revokeArtefactLink(wireId, target, tokenId),
+        (b, wireId) => b.api.artefacts.revokeArtefactLink(wireId, target, tokenId)
       )
   }
   const api: ElectronAPI = {

@@ -96,7 +96,20 @@ function fixture(): Fixture {
       },
       slidelessState: localRecord('slidelessState', { phase: 'ready', version: '1', error: null }),
       installSlideless: localRecord('installSlideless', null),
-      onSlidelessState: () => () => {}
+      onSlidelessState: () => () => {},
+      // PRDCT-4266
+      slidelessAccounts: localRecord('slidelessAccounts', { machine: 'this Mac' }),
+      checkSlidelessAccounts: localRecord('checkSlidelessAccounts', { checked: true }),
+      addSlidelessSite: localRecord('addSlidelessSite', { profiles: [] }),
+      setNewLinksSite: localRecord('setNewLinksSite', { newLinksSite: null }),
+      runSlidelessFix: localRecord('runSlidelessFix', { profiles: [] }),
+      startSlidelessSignIn: localRecord('startSlidelessSignIn', { phase: 'code_asked' }),
+      answerSlidelessSignIn: localRecord('answerSlidelessSignIn', { phase: 'done' }),
+      cancelSlidelessSignIn: localRecord('cancelSlidelessSignIn', undefined),
+      pasteSlidelessKey: localRecord('pasteSlidelessKey', { profiles: [] }),
+      artefactDeck: localRecord('artefactDeck', { deckId: 'mine' }),
+      shareArtefact: localRecord('shareArtefact', { _tag: 'shared' }),
+      revokeArtefactLink: localRecord('revokeArtefactLink', { links: [] })
     }
   }
   let holds = 0
@@ -148,7 +161,20 @@ function fixture(): Fixture {
               phase: 'missing',
               version: null,
               error: null
-            }))
+            })),
+            // PRDCT-4266
+            slidelessAccounts: record('slidelessAccounts', () => ({ machine: owner })),
+            checkSlidelessAccounts: record('checkSlidelessAccounts', () => ({ checked: true })),
+            addSlidelessSite: record('addSlidelessSite', () => ({ profiles: [] })),
+            setNewLinksSite: record('setNewLinksSite', () => ({ newLinksSite: null })),
+            runSlidelessFix: record('runSlidelessFix', () => ({ profiles: [] })),
+            startSlidelessSignIn: record('startSlidelessSignIn', () => ({ phase: 'code_asked' })),
+            answerSlidelessSignIn: record('answerSlidelessSignIn', () => ({ phase: 'done' })),
+            cancelSlidelessSignIn: record('cancelSlidelessSignIn', () => undefined),
+            pasteSlidelessKey: record('pasteSlidelessKey', () => ({ profiles: [] })),
+            artefactDeck: record('artefactDeck', () => ({ deckId: 'theirs' })),
+            shareArtefact: record('shareArtefact', () => ({ _tag: 'shared' })),
+            revokeArtefactLink: record('revokeArtefactLink', () => ({ links: [] }))
           }
         },
         push: {
@@ -365,5 +391,77 @@ describe('a connected server’s artefacts', () => {
     await expect(h.api.artefacts.slidelessState('nowhere')).rejects.toThrow(
       'The owning Clave server is not connected.'
     )
+  })
+
+  it('asks a machine’s Slideless accounts: this Mac without an id, a server by its id, handed the arguments only (PRDCT-4266)', async () => {
+    const site = 'https://decks.example.test'
+    const a = h.api.artefacts
+    await expect(a.slidelessAccounts()).resolves.toEqual({ machine: 'this Mac' })
+    await expect(a.slidelessAccounts('x')).resolves.toEqual({ machine: 'x' })
+    await a.checkSlidelessAccounts('y')
+    await a.addSlidelessSite(site, 'x')
+    await a.setNewLinksSite(null, 'x')
+    await a.runSlidelessFix(site, 'check', 'x')
+    await a.startSlidelessSignIn(site, { email: 'someone@example.test' }, 'x')
+    await a.answerSlidelessSignIn('i1', '424242', 'x')
+    await a.cancelSlidelessSignIn('i1', 'x')
+    await a.pasteSlidelessKey(site, 'slk_pasted', 'x')
+    await a.answerSlidelessSignIn('i2', '515151')
+    expect(h.calls).toEqual([
+      { owner: 'x', method: 'slidelessAccounts', args: [] },
+      { owner: 'y', method: 'checkSlidelessAccounts', args: [] },
+      { owner: 'x', method: 'addSlidelessSite', args: [site] },
+      { owner: 'x', method: 'setNewLinksSite', args: [null] },
+      { owner: 'x', method: 'runSlidelessFix', args: [site, 'check'] },
+      {
+        owner: 'x',
+        method: 'startSlidelessSignIn',
+        args: [site, { email: 'someone@example.test' }]
+      },
+      { owner: 'x', method: 'answerSlidelessSignIn', args: ['i1', '424242'] },
+      { owner: 'x', method: 'cancelSlidelessSignIn', args: ['i1'] },
+      { owner: 'x', method: 'pasteSlidelessKey', args: [site, 'slk_pasted'] }
+    ])
+    expect(h.localCalls).toEqual([
+      { method: 'slidelessAccounts', args: [] },
+      { method: 'answerSlidelessSignIn', args: ['i2', '515151'] }
+    ])
+    await expect(a.pasteSlidelessKey(site, 'slk_x', 'nowhere')).rejects.toThrow(
+      'The owning Clave server is not connected.'
+    )
+  })
+
+  it('takes an artefact’s deck and links to the server the session runs on, by its key (PRDCT-4266)', async () => {
+    const request = {
+      site: 'https://decks.example.test',
+      link: {
+        annotator: false,
+        forms: true,
+        download: true,
+        bar: true,
+        pdf: true,
+        pinVersion: false
+      }
+    }
+    await expect(h.api.artefacts.artefactDeck(X, '/srv/deck')).resolves.toEqual({
+      deckId: 'theirs'
+    })
+    await h.api.artefacts.shareArtefact(X, '/srv/deck', request)
+    await h.api.artefacts.revokeArtefactLink(X, '/srv/deck', 't1')
+    await expect(h.api.artefacts.artefactDeck('own-1', '/work/deck')).resolves.toEqual({
+      deckId: 'mine'
+    })
+    await h.api.artefacts.shareArtefact('own-1', '/work/deck', request)
+    await h.api.artefacts.revokeArtefactLink('own-1', '/work/deck', 't2')
+    expect(h.calls).toEqual([
+      { owner: 'x', method: 'artefactDeck', args: ['wire-1', '/srv/deck'] },
+      { owner: 'x', method: 'shareArtefact', args: ['wire-1', '/srv/deck', request] },
+      { owner: 'x', method: 'revokeArtefactLink', args: ['wire-1', '/srv/deck', 't1'] }
+    ])
+    expect(h.localCalls).toEqual([
+      { method: 'artefactDeck', args: ['own-1', '/work/deck'] },
+      { method: 'shareArtefact', args: ['own-1', '/work/deck', request] },
+      { method: 'revokeArtefactLink', args: ['own-1', '/work/deck', 't2'] }
+    ])
   })
 })
