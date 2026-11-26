@@ -31,12 +31,15 @@
  * 5. JWTs, e-mail addresses and token-like runs are taken out, with the
  *    measurement kit's patterns;
  * 6. last, the guarantee, whatever the starts of rules 1 to 3 let through:
- *    any occurrence left of the person's home folder, and any `/Users/<name>`
- *    or `/home/<name>` segment (`\Users\<name>` and `\home\<name>` too),
- *    wherever it stands, becomes `<path>` with the rest of its path. No user
- *    name leaves, whatever stands before it. The price: a relative path
- *    through a folder named `home` loses what follows it
- *    (`web/home/page.tsx` leaves as `web<path>`).
+ *    any occurrence left of the person's home folder, wherever it stands,
+ *    and any `/Users/<name>` or `/home/<name>` segment (`\Users\<name>` and
+ *    `\home\<name>` too) that does not follow a letter, a digit, `.` or `-`
+ *    (after a space, a quote, `@`, `_`, `/` or `:` alike), becomes `<path>`
+ *    with the rest of its path. The person's name never leaves, whatever
+ *    stands before it; a folder named `home` or `Users` inside a relative
+ *    path is a folder and keeps its path (`web/home/page.tsx`). The price:
+ *    another account's home inside a relative path keeps its name
+ *    (`backup/home/lumen/x`).
  *
  * The links are found together with the paths, so a path inside a link is
  * the link's. Two limits: a path is cut at a space, so a folder with a space
@@ -90,8 +93,10 @@ const TILDE = String.raw`${START}~(?<user>[A-Za-z_][\w.-]*)?(?<tilde>(?:/+${PART
 const POSIX = String.raw`${START}(?<posix>/${PART}(?:/+${PART})+/*)`
 
 /** A home folder's segment as the systems write it (rule 6): `/Users/<name>`,
- *  `/home/<name>`, and the same with `\` (`C:\Users\<name>`, a WSL home). */
-const HOME_SEGMENT = String.raw`[\\/](?:Users|home)[\\/]+${WINDOWS_PART}`
+ *  `/home/<name>`, and the same with `\` (`C:\Users\<name>`, a WSL home),
+ *  where it does not follow a letter, a digit, `.` or `-`: there it is a
+ *  folder of a relative path (`web/home/page.tsx`). */
+const HOME_SEGMENT = String.raw`(?<![A-Za-z0-9.-])[\\/](?:Users|home)[\\/]+${WINDOWS_PART}`
 /** The rest of a path after a home folder, on either separator (rule 6). */
 const HOME_REST = String.raw`(?:[\\/]+${WINDOWS_PART})*[\\/]*`
 /** A name that goes on past the home folder's own (`/srv/adam` is not the
@@ -196,10 +201,10 @@ export function scrubPaths(text: string, context: ScrubContext): string {
   })
 }
 
-/** Rule 6, the last: any occurrence left of the home folder, and any home
- *  folder's segment, wherever it stands, becomes `<path>` with the rest of
- *  its path, so no user name leaves whatever a start of the rules before
- *  missed. Pure. */
+/** Rule 6, the last: any occurrence left of the home folder, wherever it
+ *  stands, and any home folder's segment outside a relative path, becomes
+ *  `<path>` with the rest of its path, so the person's name never leaves
+ *  whatever a start of the rules before missed. Pure. */
 export function scrubHomes(text: string, context: ScrubContext): string {
   const home = context.home.replace(/[\\/]+$/, '')
   const forms = [HOME_SEGMENT]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clip, scrubPaths, scrubText } from './scrub'
+import { clip, scrubHomes, scrubPaths, scrubText } from './scrub'
 
 // What a decision sends is scrubbed and clipped (PRDCT-5179): each rule in
 // its order, what no rule may take, and a text that holds them all at once.
@@ -192,14 +192,15 @@ describe('scrubText', () => {
     )
   })
 
-  it('6. last, a home folder left becomes <path> with the rest of its path, wherever it stands', () => {
-    // After a letter or a digit, where no path starts.
+  it('6. last, the home folder left becomes <path> with the rest of its path, wherever it stands', () => {
+    // After a letter, a digit or a dot, where no path starts, and inside a
+    // relative path.
     expect(scrubText('see x/Users/ada/Clients/Tern/brief.pdf now', context)).toBe('see x<path> now')
-    expect(scrubText('copied to backup/home/lumen/.config/x.', context)).toBe(
+    expect(scrubText('copied to backup/Users/ada/.config/x.', context)).toBe(
       'copied to backup<path>.'
     )
-    expect(scrubText('v2.0/Users/bob/notes', context)).toBe('v2.0<path>')
-    // Windows writes it with `\`, on a drive or not.
+    expect(scrubText('v2.0/Users/ada/notes', context)).toBe('v2.0<path>')
+    // Windows writes a home with `\`, on a drive or not.
     expect(scrubText('see \\Users\\ada\\notes.txt and xC:\\Users\\bob\\a.txt', context)).toBe(
       'see <path> and xC:<path>'
     )
@@ -209,8 +210,31 @@ describe('scrubText', () => {
     expect(scrubText('logs in x/var/lumen/logs/a.log, not x/var/lumens/b', elsewhere)).toBe(
       'logs in x<path>, not x/var/lumens/b'
     )
-    // The price of the guarantee: a relative path through a folder `home`.
-    expect(scrubText('fix web/home/page.tsx', context)).toBe('fix web<path>')
+  })
+
+  it('6. a folder named home or Users inside a relative path is a folder: it keeps its path', () => {
+    expect(scrubText('fix web/home/page.tsx and app/Users/list.tsx', context)).toBe(
+      'fix web/home/page.tsx and app/Users/list.tsx'
+    )
+    // A workspace path made relative, the same.
+    expect(
+      scrubText('fix /Users/ada/w/web/home/page.tsx and /Users/ada/w/app/Users/list.tsx', context)
+    ).toBe('fix web/home/page.tsx and app/Users/list.tsx')
+    // The price: another account's home inside a relative path keeps its name.
+    expect(scrubText('copied to backup/home/lumen/.config/x.', context)).toBe(
+      'copied to backup/home/lumen/.config/x.'
+    )
+  })
+
+  it('6. another account’s home is taken after anything but a letter, a digit, `.` or `-`', () => {
+    for (const form of ['/home/lumen/notes/x.md', '\\Users\\lumen\\notes\\x.md'])
+      for (const c of BEFORE) {
+        const text = `see ${c}${form} now`
+        const kept = /^[A-Za-z0-9.-]$/.test(c)
+        expect(scrubHomes(text, context), JSON.stringify([c, form])).toBe(
+          kept ? text : `see ${c}<path> now`
+        )
+      }
   })
 
   it('6. whatever character stands before a home folder’s path, the name never leaves', () => {
