@@ -143,7 +143,12 @@ export function signInStatus(state: string): { label: string; tone: StatusTone }
 }
 
 /** The fixes that sign in with an e-mail code (the server's `SIGN_IN_KINDS`). */
-export const SIGN_IN_KINDS: readonly string[] = ['hub_login', 'email_code', 'pick_hub', 'pick_login']
+export const SIGN_IN_KINDS: readonly string[] = [
+  'hub_login',
+  'email_code',
+  'pick_hub',
+  'pick_login'
+]
 
 /** The one action a row offers, from its fix: a sign-in (asking a hub, an
  *  address, or nothing more), a key to paste, a check, a removal; none for a

@@ -11,6 +11,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsSection, string>> 
   helpers: 'Helpers',
   styles: 'Writing styles',
   integrations: 'Integrations',
+  slideless: 'Slideless',
   accounts: 'Connections',
   usage: 'Usage',
   activity: 'Activity',

@@ -80,7 +80,10 @@ function profile(
   }
 }
 
-function listing(profiles: SlidelessProfile[], newLinksSite: string | null = null): SlidelessAccounts {
+function listing(
+  profiles: SlidelessProfile[],
+  newLinksSite: string | null = null
+): SlidelessAccounts {
   return {
     machine: 'test-machine',
     cliVersion: '0.15.0',
@@ -121,7 +124,9 @@ describe('origins and names', () => {
 describe('who signs a site in', () => {
   it('says the login, the key, the first use and a missing sign-in', () => {
     expect(signInLine(profile())).toBe(`Signed in as ${EMAIL} through hub.example.test`)
-    expect(signInLine(profile({ signIn: { email: null } }))).toBe('Signed in through hub.example.test')
+    expect(signInLine(profile({ signIn: { email: null } }))).toBe(
+      'Signed in through hub.example.test'
+    )
     expect(signInLine(profile({ signIn: { via: 'key' } }))).toBe(
       `Signed in with its own key as ${EMAIL}`
     )
