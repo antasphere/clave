@@ -55,10 +55,10 @@ const slugOf = (name) =>
     .replace(/^-+|-+$/g, '')
 
 /** A Quill tab's first message as it must leave the machine: the workspace's
- *  path relative, every path in a home folder dropped wherever it stands, a
- *  closing curly quote or `**` with it (`SAY.quill`, `src/main/decisions/scrub.ts`). */
+ *  path relative, every path in a home folder dropped wherever it stands, the
+ *  closing curly quote and `**` left after it (`SAY.quill`, `src/main/decisions/scrub.ts`). */
 export const sentFirst = (n) =>
-  `Quill ${n}: the ink parser in quill/src/ink.ts drops the heading after a table. My notes are in <path>, read them first. Compare @<path> with the brief “<path> and the list in **<path>.`
+  `Quill ${n}: the ink parser in quill/src/ink.ts drops the heading after a table. My notes are in <path>, read them first. Compare @<path> with the brief “<path>” and the list in **<path>**.`
 
 /** The paths, the workspace and the tabs' words of one fixture, under the
  *  run's namespace (`name` keeps two users of it apart). */

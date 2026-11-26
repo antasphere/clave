@@ -139,15 +139,33 @@ describe('scrubText', () => {
     )
     expect(
       scrubText('“~/Clients/Tern/notes.md” and ‘/srv/tern/a’ and «/srv/tern/b»', context)
-    ).toBe('“<path> and ‘<path> and «<path>')
+    ).toBe('“<path>” and ‘<path>’ and «<path>»')
     expect(
       scrubText('the **/srv/tern/c** one, _/srv/tern/d_, !/srv/tern/e →/srv/tern/f', context)
-    ).toBe('the **<path> one, _<path>, !<path> →<path>')
+    ).toBe('the **<path>** one, _<path>, !<path> →<path>')
     // `~name/…` is another account's home: outside, whoever it is.
     expect(scrubText('see ~lumen/notes/todo.md and ~/w/quill/a.ts', context)).toBe(
       'see <path> and quill/a.ts'
     )
     expect(scrubText('_C:\\Clients\\tern.pdf', context)).toBe('_<path>')
+  })
+
+  it('the punctuation closing a path is left after it: a closing quote, `»` and a run of `*` too', () => {
+    // Outside the workspace: the mark, then the punctuation.
+    expect(
+      scrubText('“/srv/tern/a” **/srv/tern/b** «/srv/tern/c» ‘/srv/tern/d’. *~/Clients/e*', context)
+    ).toBe('“<path>” **<path>** «<path>» ‘<path>’. *<path>*')
+    expect(scrubText('«file:///Users/ada/Clients/x.pdf», “C:\\Clients\\tern.pdf”', context)).toBe(
+      '«<path>», “<path>”'
+    )
+    // Inside it: the relative path, then the punctuation; the root itself too.
+    expect(
+      scrubText('“/Users/ada/w/quill/src/ink.ts” **/Users/ada/w/quill**, «/Users/ada/w»', context)
+    ).toBe('“quill/src/ink.ts” **quill**, «.»')
+    // A link keeps it too.
+    expect(
+      scrubText('“https://atlas.example.com/a/b” and **https://lumen.example**', context)
+    ).toBe('“https://atlas.example.com/…” and **https://lumen.example**')
   })
 
   it('3. where a path starts, character by character: anywhere but inside a word, a number or a path', () => {
@@ -280,18 +298,18 @@ describe('scrubText', () => {
         'see <path> and <path>'
       ],
       ['curl http://admin:hunter2pass@localhost:8080/api', 'curl http://localhost:8080/…'],
-      ['Open “/Users/ada/Clients/AcmeCorp/brief.pdf” please', 'Open “<path> please'],
-      ['Regarde «/Users/ada/Clients/AcmeCorp/brief.pdf»', 'Regarde «<path>'],
-      ['The file is **/Users/ada/Clients/AcmeCorp/brief.pdf** now', 'The file is **<path> now'],
+      ['Open “/Users/ada/Clients/AcmeCorp/brief.pdf” please', 'Open “<path>” please'],
+      ['Regarde «/Users/ada/Clients/AcmeCorp/brief.pdf»', 'Regarde «<path>»'],
+      ['The file is **/Users/ada/Clients/AcmeCorp/brief.pdf** now', 'The file is **<path>** now'],
       ['Moved it →/Users/ada/Clients/AcmeCorp/brief.pdf', 'Moved it →<path>'],
       [
         'paths: _/Users/ada/Clients/AcmeCorp/x_ and !/Users/ada/Clients/AcmeCorp/y',
         'paths: _<path> and !<path>'
       ],
-      ['Use ‘/Users/ada/Clients/AcmeCorp/brief.pdf’', 'Use ‘<path>'],
+      ['Use ‘/Users/ada/Clients/AcmeCorp/brief.pdf’', 'Use ‘<path>’'],
       [
         'In ~/Clients/AcmeCorp/brief.pdf, and “~/Clients/AcmeCorp/notes.md”',
-        'In <path>, and “<path>'
+        'In <path>, and “<path>”'
       ],
       // Climbs out of the workspace with `..`: outside, whatever it starts with.
       ['inside /Users/ada/w/../Clients/AcmeCorp/brief.pdf', 'inside <path>'],

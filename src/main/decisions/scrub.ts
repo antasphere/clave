@@ -43,12 +43,13 @@
  *    (`backup/home/lumen/x`).
  *
  * The links are found together with the paths, so a path inside a link is
- * the link's. Two limits: a path is cut at a space, so a folder with a space
- * in its name (`/Volumes/Ada Backup/notes.md`) becomes `<path>` up to the
- * space, and what follows it (` Backup/notes.md`) stays; and a path ends at
- * a space, an ASCII quote or a bracket, so a closing curly quote, `»` or
- * `**` right after it goes with it (`“/a/b”` leaves as `“<path>`). Pure: no
- * process, no file.
+ * the link's. A path ends at a space, an ASCII quote or a bracket, and the
+ * punctuation that closes it is left after it: `.` `,` `;` `:` `!` `?`, a
+ * closing `”`, `’` or `»`, and a run of `*` (`“/a/b”` leaves as
+ * `“<path>”`, a path in Markdown bold as `**<path>**`). One limit: a path
+ * is cut at a space, so a folder with a space in its name
+ * (`/Volumes/Ada Backup/notes.md`) becomes `<path>` up to the space, and
+ * what follows it (` Backup/notes.md`) stays. Pure: no process, no file.
  */
 
 /** Whitespace collapsed to single spaces, cut at `limit` characters with a
@@ -82,8 +83,9 @@ const WINDOWS_PART = String.raw`(?:[^\\/\s"'\`()\[\]{}<>:]|:(?![\\/]))+`
  *  `~`, that is inside a word, a number or another path. Nothing else keeps
  *  a path whole: not an underscore, a curly quote, `@` nor `*`. */
 const START = String.raw`(?<![A-Za-z0-9/.~-])`
-/** What may follow the root's own name: its end, a separator, a space. */
-const ROOT_END = String.raw`(?=$|[/\s"'<>()\[\]{}\`,;:!?.])`
+/** What may follow the root's own name: its end, a separator, a space, the
+ *  punctuation that closes a path. */
+const ROOT_END = String.raw`(?=$|[/\s"'<>()\[\]{}\`,;:!?.”’»*])`
 
 /** A link: a scheme, `://`, and the rest up to a space, a quote or a closing
  *  bracket (rules 2 and 4). */
@@ -110,10 +112,12 @@ export const EMAIL_PATTERN = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g
 export const TOKEN_PATTERN =
   /(?<![\w/.-])(?:sk|pk|ghp|gho|xox[abp]|AKIA|AIza)[\w-]{10,}|(?<![\w/-])[A-Za-z0-9_-]{28,}(?![\w/-])/g
 
-/** Punctuation that closes a sentence rather than a path or a link. A last
- *  segment `..` is the path's own, never punctuation: it climbs. */
+/** Punctuation that closes a sentence, a quote or an emphasis rather than a
+ *  path or a link: `.` `,` `;` `:` `!` `?`, a closing `”`, `’` or `»`, and
+ *  a run of `*` (Markdown's). A last segment `..` is the path's own, never
+ *  punctuation: it climbs. */
 function splitTrailing(rest: string): [string, string] {
-  const match = /[.,;:!?]+$/.exec(rest)
+  const match = /[.,;:!?”’»*]+$/.exec(rest)
   if (!match) return [rest, '']
   const climbs = /[\\/]$/.test(rest.slice(0, match.index)) && /^\.\.(?!\.)/.test(match[0])
   const cut = match.index + (climbs ? 2 : 0)
