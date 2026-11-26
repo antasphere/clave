@@ -395,6 +395,29 @@ describe('making a link', () => {
     expect(await s.share.deck('s1', s.folder)).toMatchObject({ deckId: 'd9', linkedFolder: null })
   })
 
+  it('keeps a folder’s linked deck on its own site: another site of the machine named is refused, nothing pushed', async () => {
+    const s = setup({
+      override: (args, child) => {
+        if (!args.includes('open')) return false
+        answer(
+          JSON.stringify({ presentationId: 'd9', baseUrl: `${DECKS}/`, url: `${DECKS}/d/d9` })
+        )(child)
+        return true
+      }
+    })
+    // Both sites are the machine's; the folder is a deck on the first, the second is named.
+    expect(
+      await refusal(
+        s.share.share({ sessionId: 's1', target: s.folder, site: LOCAL, link: defaults })
+      )
+    ).toBe(`ArtefactRefusal: ${deckStays(DECKS)}`)
+    expect(s.commands().filter((call) => call.args.includes('push'))).toEqual([])
+    expect(s.slideless.argv()).toEqual([
+      ['--json', 'profiles'],
+      ['--json', 'open', s.folder]
+    ])
+  })
+
   it('refuses a folder whose link file names a site the machine does not list: only open and the listing run', async () => {
     const elsewhere = 'https://elsewhere.example.test'
     const s = setup({
