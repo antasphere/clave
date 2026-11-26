@@ -1,0 +1,38 @@
+{
+  "workspaceRoot": "/w",
+  "home": "/home/ada",
+  "tab": {
+    "firstMessage": "Quill documents should embed live Atlas maps. Add a map block to the Quill editor (quill-web) and the embed endpoint it needs on the Atlas tiles service, so a map in a document is served by Atlas. This work spans both projects.",
+    "latestMessages": [
+      "The Atlas side first: add the embed endpoint and its test.",
+      "Now the block in the Quill editor that calls it.",
+      "Run both test suites."
+    ],
+    "touched": {
+      "/w/labs/quill/quill-web/src/blocks/map-embed.tsx": 6,
+      "/w/labs/quill/quill-web/src/blocks/index.ts": 2,
+      "/w/labs/atlas/server/routes/embed.go": 5,
+      "/w/labs/atlas/server/routes/embed_test.go": 3
+    }
+  },
+  "options": [
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Quill",
+      "folder": "labs/quill",
+      "description": "Quill, a collaborative document editor: the web app (quill-web) and its API (quill-api)."
+    },
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Atlas",
+      "folder": "labs/atlas",
+      "description": "Atlas, the map tiles service and its public viewer."
+    },
+    {
+      "file": "/w/studio/lumen/.clave/workspaces/default.clave",
+      "name": "Lumen",
+      "folder": "studio/lumen",
+      "description": "Lumen, a marketing site built for a client: the pages, the CMS and its deploys."
+    }
+  ]
+}

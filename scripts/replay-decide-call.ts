@@ -46,13 +46,24 @@ async function main(file: string, key: string): Promise<number> {
   console.log(
     `request: ${JSON.stringify(request).length} chars, ${input.options.length} projects, model ${model}, basis ${basisOf(request, model).slice(0, 12)}`
   )
-  const outcome = await askJev({
-    baseUrl: JEV_API,
-    key,
-    model,
-    request,
-    timeoutMs: tabProjectDecision.timeoutMs
-  })
+  const ask = (asked: string): ReturnType<typeof askJev> =>
+    askJev({
+      baseUrl: JEV_API,
+      key,
+      model: asked,
+      request,
+      timeoutMs: tabProjectDecision.timeoutMs
+    })
+  let outcome = await ask(model)
+  // What the runner does (`runner.ts`): a model the service says it does not
+  // know is asked once more on the fallback, so the replay sends what the app
+  // sends and says it did.
+  if (outcome.kind === 'model-gone' && tabProjectDecision.fallbackModel) {
+    console.log(
+      `the service does not know ${model}: asked again on ${tabProjectDecision.fallbackModel}, as the runner does`
+    )
+    outcome = await ask(tabProjectDecision.fallbackModel)
+  }
   if (outcome.kind !== 'ok') {
     // Every outcome is already free of the key (`askJev` cleans what it keeps).
     console.log(`no answer: ${JSON.stringify(outcome)}`)
