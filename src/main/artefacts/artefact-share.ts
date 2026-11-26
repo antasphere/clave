@@ -39,7 +39,7 @@ import type {
   ArtefactShareResult,
   SlidelessAccounts
 } from '@clave/contract/artefacts'
-import type { ArtefactDecks, DeckRecord } from './artefact-decks'
+import { MAX_LINKS_PER_DECK, type ArtefactDecks, type DeckRecord } from './artefact-decks'
 import { ArtefactRefusal } from './refusal'
 import { supportsAccounts, tooOldFor, type ResolvedCli } from './slideless-cli'
 import { firstLine, isGone, parseJsonOutput, parsePush, parseSharedLink } from './slideless-json'
@@ -63,6 +63,9 @@ export const CHOOSE_SITE = "Choose the site for this artefact's first link."
 export const CHOOSE_SITE_FOR_NEW_DECK = "Choose the site for this artefact's new deck."
 export const deckStays = (site: string): string =>
   `This artefact's deck is on ${site}; a deck stays on its own site.`
+/** A deck whose record holds as many links as it keeps: one more would push the oldest out unrevocable. */
+export const tooManyLinks = (n: number): string =>
+  `This page already has ${n} links made from Clave: revoke one before making another.`
 /** A folder whose link file names a site the machine does not list: Clave never signs in there. */
 export const linkedElsewhere = (site: string): string =>
   `This folder is linked to a deck on ${site}, which is not one of this machine's Slideless sites: add it with « Add a site » in Settings › Slideless first.`
@@ -183,6 +186,11 @@ export function createArtefactShare(deps: ShareDeps): ArtefactShare {
     // The record first, before anything runs: a record that cannot be read
     // refuses the share, so no page is pushed whose deck could not be recorded.
     const record = deps.decks.get(artefact.target)
+    // A link past the bound the record keeps is refused before anything runs:
+    // never made, then pushed out of the record where no one could revoke it.
+    // A new deck starts with none.
+    if (record && request.newDeck !== true && record.links.length >= MAX_LINKS_PER_DECK)
+      throw new ArtefactRefusal(tooManyLinks(record.links.length))
     // The machine's sites, listed once: a site named, and the site a folder's
     // link file names, must be one of them before anything reaches a site.
     let listing: SlidelessAccounts | null = null

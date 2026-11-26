@@ -11,7 +11,13 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Artefact, ArtefactShareSettings } from '@clave/contract/artefacts'
-import { ArtefactDecks, DECKS_FILE, fileDecksStorage, recordUnreadable } from './artefact-decks'
+import {
+  ArtefactDecks,
+  DECKS_FILE,
+  fileDecksStorage,
+  MAX_LINKS_PER_DECK,
+  recordUnreadable
+} from './artefact-decks'
 import {
   CHOOSE_SITE,
   CHOOSE_SITE_FOR_NEW_DECK,
@@ -20,6 +26,7 @@ import {
   FOREIGN_LINK,
   linkedElsewhere,
   stagedPath,
+  tooManyLinks,
   type ArtefactShare
 } from './artefact-share'
 import type { LinksStorage } from './links'
@@ -474,6 +481,46 @@ describe('making a link', () => {
     expect(answered).toEqual({ _tag: 'deck_gone', deck: recorded })
     expect(s.commands().filter((call) => call.args.includes('share'))).toHaveLength(1)
     expect(await s.share.deck('s1', s.folder)).toEqual(recorded)
+  })
+
+  it('refuses a link past the fifty a deck keeps before anything runs; a revoke makes room, and a new deck starts with none', async () => {
+    const s = setup()
+    await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
+    for (let n = 2; n <= MAX_LINKS_PER_DECK; n++)
+      s.decks.addLink(s.folder, {
+        tokenId: `kept-${n}`,
+        name: 'Clave',
+        url: `${DECKS}/s/secret-kept-${n}`,
+        createdAt: '2026-11-26T10:00:00.000Z',
+        expiresAt: null,
+        pinnedVersion: null,
+        hasPassword: false
+      })
+    expect((await s.share.deck('s1', s.folder)).links).toHaveLength(MAX_LINKS_PER_DECK)
+    const ran = s.slideless.calls.length
+    expect(
+      await refusal(s.share.share({ sessionId: 's1', target: s.folder, link: defaults }))
+    ).toBe(`ArtefactRefusal: ${tooManyLinks(MAX_LINKS_PER_DECK)}`)
+    expect(tooManyLinks(MAX_LINKS_PER_DECK)).toBe(
+      'This page already has 50 links made from Clave: revoke one before making another.'
+    )
+    // Nothing ran, and the oldest link is still there to revoke.
+    expect(s.slideless.calls).toHaveLength(ran)
+    expect((await s.share.deck('s1', s.folder)).links[0]!.tokenId).toBe('t1')
+    await s.share.revoke('s1', s.folder, 't1')
+    const again = await s.share.share({ sessionId: 's1', target: s.folder, link: defaults })
+    expect(again.deck.links).toHaveLength(MAX_LINKS_PER_DECK)
+    expect(again.deck.links[0]!.tokenId).toBe('kept-2')
+    // A new deck (the old one gone from its site) starts with none: never refused for the old one's links.
+    const remade = await s.share.share({
+      sessionId: 's1',
+      target: s.folder,
+      site: LOCAL,
+      newDeck: true,
+      link: defaults
+    })
+    expect(remade).toMatchObject({ _tag: 'shared', deck: { site: LOCAL } })
+    expect(remade.deck.links).toHaveLength(1)
   })
 
   it('answers a recorded deck’s push refused for another reason with the refusal, never deck_gone', async () => {

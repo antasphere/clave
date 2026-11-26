@@ -158,7 +158,8 @@ export class ArtefactDecks {
     return record
   }
 
-  /** Adds a link Clave made to the artefact's deck; over the bound, its oldest goes. */
+  /** Adds a link Clave made to the artefact's deck; over the bound, its oldest goes
+   *  (the share refuses a link past it first: the bound only protects the file). */
   addLink(target: string, link: ArtefactShareLink): DeckRecord | undefined {
     const decks = this.read()
     const before = decks[target]
