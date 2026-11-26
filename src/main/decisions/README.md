@@ -94,9 +94,11 @@ key again: one switched off, or whose key was removed, while it waited answers
 
 `TYPESAFE_API_KEY=… npx vite-node scripts/replay-decide-call.ts <input.json>` sends the
 app's own `tab-project` request for an input of `{ tab, options, workspaceRoot, home }`
-(`scripts/fixtures/replay-decide-example.json` is an invented one), prints the model, the
-time, the reading and the shares, and exits 1 when the answer is not the documented
-shape. It never prints the key. Real calls: never from the test suite.
+(`scripts/fixtures/replay-decide-example.json` is an invented one) through `runDecision`,
+so its fallback and its retries are the runner's, prints the model, the time, the reading
+and the shares, and exits 1 when the answer is not the documented shape. It never prints
+the key. Real calls: never from the test suite (`replay-decide-call.test.mjs` runs it on a
+stubbed `fetch`).
 
 ## The config seam
 

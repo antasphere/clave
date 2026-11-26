@@ -1,8 +1,11 @@
 /**
  * Replay a `tab-project` decision on an input file, against the REAL Jev,
- * with the request the app sends (`src/main/decisions/tab-project.ts`,
- * `jev-client.ts`). Prints the model that answered, the time, the reading
- * and the shares; exits 1 when the answer is not the documented shape.
+ * with the request the app sends (`src/main/decisions/tab-project.ts`),
+ * asked the way the app asks it: through the runner (`runner.ts`), so the
+ * fallback model, the declared model asked once more and the retry after a
+ * limit are the runner's by construction. Prints the model that answered,
+ * the time, the reading and the shares; exits 1 when the answer is not the
+ * documented shape.
  *
  *   TYPESAFE_API_KEY=… npx vite-node scripts/replay-decide-call.ts <input.json>
  *
@@ -12,11 +15,10 @@
  * that spends a real request: never run it from the test suite (PRDCT-5179).
  */
 import { readFileSync } from 'node:fs'
-import { askJev } from '../src/main/decisions/jev-client'
+import { askJev, type AskJevOptions, type JevOutcome } from '../src/main/decisions/jev-client'
+import { runDecision } from '../src/main/decisions/runner'
 import {
   basisOf,
-  buildTabProjectRequest,
-  readTabProjectAnswers,
   tabProjectDecision,
   type TabProjectInput
 } from '../src/main/decisions/tab-project'
@@ -37,7 +39,7 @@ if (!key) {
 
 async function main(file: string, key: string): Promise<number> {
   const input = JSON.parse(readFileSync(file, 'utf8')) as TabProjectInput
-  const request = buildTabProjectRequest(input)
+  const request = tabProjectDecision.build(input)
   if (!request) {
     console.error('Nothing to ask: the tab said nothing, or there is no project.')
     return 1
@@ -46,38 +48,48 @@ async function main(file: string, key: string): Promise<number> {
   console.log(
     `request: ${JSON.stringify(request).length} chars, ${input.options.length} projects, model ${model}, basis ${basisOf(request, model).slice(0, 12)}`
   )
-  const ask = (asked: string): ReturnType<typeof askJev> =>
-    askJev({
-      baseUrl: JEV_API,
-      key,
-      model: asked,
-      request,
-      timeoutMs: tabProjectDecision.timeoutMs
-    })
-  let outcome = await ask(model)
-  // What the runner does (`runner.ts`): a model the service says it does not
-  // know is asked once more on the fallback, so the replay sends what the app
-  // sends and says it did.
-  if (outcome.kind === 'model-gone' && tabProjectDecision.fallbackModel) {
-    console.log(
-      `the service does not know ${model}: asked again on ${tabProjectDecision.fallbackModel}, as the runner does`
-    )
-    outcome = await ask(tabProjectDecision.fallbackModel)
+  // Every request the runner sends goes through here, `askJev` itself: each
+  // one asked again is said, and the last answer is kept for its shares.
+  const seen: { last: { model: string; outcome: JevOutcome } | null } = { last: null }
+  const ask = async (asked: AskJevOptions): Promise<JevOutcome> => {
+    const before = seen.last
+    if (before?.outcome.kind === 'model-gone')
+      console.log(
+        `the service does not know ${before.model}: asked again on ${asked.model}, as the runner does`
+      )
+    else if (before?.outcome.kind === 'limit')
+      console.log(
+        `TypeSafe asked to wait: asked again on ${asked.model} after the pause, as the runner does`
+      )
+    const outcome = await askJev(asked)
+    seen.last = { model: asked.model, outcome }
+    return outcome
   }
-  if (outcome.kind !== 'ok') {
-    // Every outcome is already free of the key (`askJev` cleans what it keeps).
-    console.log(`no answer: ${JSON.stringify(outcome)}`)
+  const decided = await runDecision(tabProjectDecision, input, {
+    ask,
+    openKey: async () => key,
+    baseUrl: () => JEV_API
+  })
+  const last = seen.last?.outcome
+  if (!decided.ok) {
+    if (decided.reason === 'unreadable' && last?.kind === 'ok') {
+      console.log(
+        `answered by ${last.model} in ${last.ms} ms, ${last.inputTokens ?? '?'} input tokens`
+      )
+      console.log(`NOT THE DOCUMENTED SHAPE: ${JSON.stringify(last.answers).slice(0, 400)}`)
+      return 1
+    }
+    // The service's last answer, as the replay always printed it (the
+    // runner's own outcome when it sent nothing). Every outcome is already
+    // free of the key (`askJev` cleans what it keeps).
+    console.log(`no answer: ${JSON.stringify(last ?? decided)}`)
     return 1
   }
   console.log(
-    `answered by ${outcome.model} in ${outcome.ms} ms, ${outcome.inputTokens ?? '?'} input tokens`
+    `answered by ${decided.model} in ${decided.ms} ms, ${decided.inputTokens ?? '?'} input tokens`
   )
-  const reading = readTabProjectAnswers(outcome.answers, input)
-  if (!reading) {
-    console.log(`NOT THE DOCUMENTED SHAPE: ${JSON.stringify(outcome.answers).slice(0, 400)}`)
-    return 1
-  }
-  const project = outcome.answers.project
+  const reading = decided.value
+  const project = last?.kind === 'ok' ? last.answers.project : undefined
   const shares =
     project?.type === 'choice'
       ? Object.entries(project.probabilities)
