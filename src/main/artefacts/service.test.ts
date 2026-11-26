@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ForwardRegistry } from '@clave/server/forward-registry'
@@ -20,6 +28,16 @@ import {
   type ArtefactServiceHandle
 } from './service'
 import { CLI_OVERRIDE_ENV } from './slideless-cli'
+import {
+  answer,
+  DECKS,
+  EXEC_PATH,
+  fakeSlideless,
+  flush,
+  isListing,
+  listedProfile,
+  listingJson
+} from './slideless.test-support'
 
 /** Where every test's clock starts. */
 const START = Date.UTC(2026, 10, 12, 10)
@@ -692,5 +710,128 @@ describe('stopping the service', () => {
     expect(forwards.resolve(held.lease)).toBeUndefined()
     expect(forwards.size()).toBe(0)
     await expect.poll(() => alive(pid), { timeout: 3_000 }).toBe(false)
+  })
+})
+
+/**
+ * The Slideless accounts and an artefact's links, through the service
+ * (PRDCT-4266): its own copy run under its own Node and environment (a fake
+ * spawn here, never a process), « New links go to » and the decks kept as
+ * two owner-only documents of its data folder, the links of an artefact only
+ * for the session that shows it, and a sign-in killed when it stops.
+ */
+describe('the Slideless accounts and the links, through the service', () => {
+  const hubLogin = { kind: 'hub_login', argv: ['slideless', '--profile', 'decks', 'login'] }
+  const settings = {
+    annotator: false,
+    forms: true,
+    download: true,
+    bar: true,
+    pdf: true,
+    pinVersion: false
+  }
+
+  function wired(): {
+    service: ArtefactServiceHandle
+    slideless: ReturnType<typeof fakeSlideless>
+    dataDir: string
+    deck: string
+    cli: string
+  } {
+    const root = mkdtempSync(join(tmpdir(), 'clave-artefact-accounts-'))
+    dirs.push(root)
+    const cli = join(root, 'override-bin.js')
+    writeFileSync(cli, '')
+    const deck = join(root, 'work', 'deck')
+    mkdirSync(deck, { recursive: true })
+    writeFileSync(join(deck, 'index.html'), '<h1>deck</h1>')
+    const slideless = fakeSlideless((args, child) => {
+      if (isListing(args)) return answer(listingJson([listedProfile(DECKS, hubLogin)]))(child)
+      if (args.includes('open')) return answer('', 1, 'Error: no link file\n')(child)
+      if (args.includes('push'))
+        return answer(JSON.stringify({ presentation: { id: 'd1' }, version: { version: 1 } }))(
+          child
+        )
+      if (args.includes('share'))
+        return answer(
+          JSON.stringify({ url: `${DECKS}/s/secret`, shareToken: { id: 't1', name: 'Clave' } })
+        )(child)
+      if (args.includes('unshare')) return answer(JSON.stringify({ id: 't1' }))(child)
+      // A sign-in's command waits on its question.
+    })
+    const dataDir = join(root, 'data')
+    const service = createArtefactService({
+      dataDir,
+      execPath: EXEC_PATH,
+      env: { PATH: '/usr/bin:/bin', [CLI_OVERRIDE_ENV]: cli },
+      links: new ArtefactLinks(memory(), () => {}),
+      forwards: new ForwardRegistry(),
+      sessions: { knows: (id) => id === 's1', onState: () => () => {} },
+      autoInstall: false,
+      spawn: slideless.deps.spawn!,
+      log: () => {}
+    })
+    services.push(service)
+    return { service, slideless, dataDir, deck, cli }
+  }
+
+  it('lists the accounts with its own copy, under its own Node and environment', async () => {
+    const { service, slideless, cli } = wired()
+    const accounts = await service.slidelessAccounts()
+    expect(accounts.error).toBeNull()
+    expect(accounts.profiles.map((p) => p.site.origin)).toEqual([DECKS])
+    expect((await service.checkSlidelessAccounts()).checked).toBe(true)
+    const [call] = slideless.calls
+    expect(call!.command).toBe(EXEC_PATH)
+    expect(call!.script).toBe(cli)
+    expect(call!.args).toEqual(['--json', 'profiles'])
+    expect(call!.options.env).toEqual({
+      PATH: '/usr/bin:/bin',
+      [CLI_OVERRIDE_ENV]: cli,
+      ELECTRON_RUN_AS_NODE: '1'
+    })
+  })
+
+  it('keeps « New links go to » and the decks as owner-only documents of its data folder', async () => {
+    const { service, dataDir, deck } = wired()
+    expect((await service.setNewLinksSite(`${DECKS}/`)).newLinksSite).toBe(DECKS)
+    await service.open('s1', deck)
+    const shared = await service.shareArtefact('s1', deck, { site: DECKS, link: settings })
+    expect(shared).toMatchObject({ _tag: 'shared', link: { tokenId: 't1' } })
+    for (const [file, content] of [
+      ['slideless-settings.json', { v: 1, newLinksSite: DECKS }],
+      [
+        'artefact-decks.json',
+        { v: 1, decks: { [deck]: expect.objectContaining({ deckId: 'd1' }) } }
+      ]
+    ] as const) {
+      expect(statSync(join(dataDir, file)).mode & 0o777).toBe(0o600)
+      expect(JSON.parse(readFileSync(join(dataDir, file), 'utf8'))).toEqual(content)
+    }
+    expect(await service.artefactDeck('s1', deck)).toMatchObject({ deckId: 'd1', links: [{}] })
+    expect(await service.revokeArtefactLink('s1', deck, 't1')).toMatchObject({ links: [] })
+  })
+
+  it('refuses the links of an artefact the session does not show', async () => {
+    const { service, deck, slideless } = wired()
+    await expect(service.artefactDeck('s1', deck)).rejects.toThrow(NO_ARTEFACT_OPEN)
+    await expect(
+      service.shareArtefact('s1', deck, { site: DECKS, link: settings })
+    ).rejects.toThrow(NO_ARTEFACT_OPEN)
+    await expect(service.revokeArtefactLink('s1', deck, 't1')).rejects.toThrow(NO_ARTEFACT_OPEN)
+    expect(slideless.calls).toEqual([])
+  })
+
+  it('kills a sign-in waiting on its code when it stops', async () => {
+    const { service, slideless } = wired()
+    const starting = service.startSlidelessSignIn(DECKS, { email: 'someone@example.test' })
+    await flush()
+    const signIn = slideless.calls.at(-1)!
+    expect(signIn.args).toContain('login')
+    signIn.child.say('Code: ')
+    expect(await starting).toMatchObject({ phase: 'code_asked' })
+    await service.stop()
+    expect(signIn.child.killedWith).toBe('SIGKILL')
+    await service.cancelSlidelessSignIn('nobody')
   })
 })

@@ -22,4 +22,26 @@ describe('the artefact service without Electron', () => {
     expect(typeof host.writePreviewHost).toBe('function')
     expect(typeof cli.resolveCli).toBe('function')
   })
+
+  it('loads the Slideless accounts, the sign-in and the links (PRDCT-4266)', async () => {
+    const modules = await Promise.all([
+      import('./slideless-run'),
+      import('./slideless-json'),
+      import('./slideless-settings'),
+      import('./slideless-accounts'),
+      import('./slideless-sign-in'),
+      import('./artefact-decks'),
+      import('./artefact-share'),
+      import('./refusal')
+    ])
+    const [run, json, settings, accounts, signIn, decks, share, refusal] = modules
+    expect(typeof run.runSlideless).toBe('function')
+    expect(typeof json.parseSharedLink).toBe('function')
+    expect(typeof settings.normalOrigin).toBe('function')
+    expect(typeof accounts.createSlidelessAccounts).toBe('function')
+    expect(typeof signIn.createSlidelessSignIns).toBe('function')
+    expect(typeof decks.ArtefactDecks).toBe('function')
+    expect(typeof share.createArtefactShare).toBe('function')
+    expect(typeof refusal.ArtefactRefusal).toBe('function')
+  })
 })

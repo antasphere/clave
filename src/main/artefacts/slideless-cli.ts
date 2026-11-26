@@ -25,6 +25,10 @@ export const SLIDELESS_PACKAGE = '@antasphere/slideless'
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org'
 /** The first release whose dev server keeps local versions and answers the snapshot route. */
 export const MIN_SLIDELESS_VERSION = '0.14.0'
+/** The first release that lists its sites and signs in with no terminal, and
+ *  that the links of an artefact are made with (PRDCT-4266). The previews
+ *  keep `MIN_SLIDELESS_VERSION`. */
+export const MIN_ACCOUNTS_VERSION = '0.15.0'
 /** A path to a `bin.js` to run instead of the managed copy (a teammate's checkout, the tests). */
 export const CLI_OVERRIDE_ENV = 'CLAVE_SLIDELESS_CLI'
 const MAX_TARBALL_BYTES = 50 * 1024 * 1024
@@ -265,6 +269,17 @@ export function resolveCli(
   if (compareVersions(version, MIN_SLIDELESS_VERSION) < 0)
     return { cli: null, reason: `Slideless ${version} is older than ${MIN_SLIDELESS_VERSION}` }
   return { cli: { cliPath: join(dir, version, 'bin.js'), version, override: false } }
+}
+
+/** Whether a copy runs the accounts and the links: `MIN_ACCOUNTS_VERSION` or
+ *  later, or the override (its version is `'override'`), which always does. */
+export function supportsAccounts(version: string): boolean {
+  return version === 'override' || compareVersions(version, MIN_ACCOUNTS_VERSION) >= 0
+}
+
+/** The sentence a copy too old for the accounts or the links is refused with. */
+export function tooOldFor(what: 'accounts' | 'links', version: string): string {
+  return `Clave's Slideless is ${version}; ${what} need ${MIN_ACCOUNTS_VERSION} or later: Settings › Software Update installs it.`
 }
 
 /** The state the renderer shows, from a resolution and what is running. */
