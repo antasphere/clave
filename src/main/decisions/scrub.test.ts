@@ -55,6 +55,24 @@ describe('scrubText', () => {
     )
   })
 
+  it('1. a path is inside the workspace by its normalised form: one that climbs above the root is outside', () => {
+    // `..` out of the root reaches a folder of the home, a client's.
+    expect(scrubText('see /Users/ada/w/../Clients/AcmeCorp/brief.pdf now', context)).toBe(
+      'see <path> now'
+    )
+    expect(scrubText('cd /Users/ada/w/..', context)).toBe('cd <path>')
+    expect(scrubText('cd /Users/ada/w/src/../../Clients, then', context)).toBe('cd <path>, then')
+    expect(scrubText('cd ~/w/../Clients/AcmeCorp', context)).toBe('cd <path>')
+    expect(scrubText('file:///Users/ada/w/../Clients/AcmeCorp/brief.pdf', context)).toBe('<path>')
+    // `.` and a `..` that stays in: inside, relative, resolved.
+    expect(
+      scrubText('open /Users/ada/w/./src/a.ts and /Users/ada/w/src/../lib/b.ts.', context)
+    ).toBe('open src/a.ts and lib/b.ts.')
+    expect(scrubText('cd /Users/ada/w/src/.. and /Users/ada/w/../w/atlas', context)).toBe(
+      'cd . and atlas'
+    )
+  })
+
   it('2. a file:// link takes the same rules on its path', () => {
     expect(scrubText('Open file:///Users/ada/w/quill/dist/index.html now', context)).toBe(
       'Open quill/dist/index.html now'
@@ -234,8 +252,8 @@ describe('scrubText', () => {
         'In ~/Clients/AcmeCorp/brief.pdf, and “~/Clients/AcmeCorp/notes.md”',
         'In <path>, and “<path>'
       ],
-      // Climbs out of the workspace with `..`: it leaves relative, no name in it.
-      ['inside /Users/ada/w/../Clients/AcmeCorp/brief.pdf', null],
+      // Climbs out of the workspace with `..`: outside, whatever it starts with.
+      ['inside /Users/ada/w/../Clients/AcmeCorp/brief.pdf', 'inside <path>'],
       [
         'Compare @/Users/ada/Clients/AcmeCorp/brief.pdf with @quill/src/ink.ts',
         'Compare @<path> with @quill/src/ink.ts'

@@ -5,7 +5,11 @@
  *
  * 1. an absolute path inside the workspace becomes relative to it (`.` for
  *    the root itself): the workspace's own folders are what a project is
- *    recognised by;
+ *    recognised by. Inside is decided on the path's normalised form, its
+ *    `.` and `..` segments resolved (a last `..` is the path's, never
+ *    punctuation): one that climbs above the root is outside
+ *    (`/Users/ada/w/../Clients/x` is `<path>`), one that stays in leaves
+ *    resolved (`/Users/ada/w/src/../lib/b.ts` as `lib/b.ts`);
  * 2. a `file://` link takes the same rules on its path: inside the workspace
  *    the relative path alone, outside it `<path>`;
  * 3. any other absolute path becomes `<path>`. The home folder is outside
@@ -99,10 +103,27 @@ export const EMAIL_PATTERN = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g
 export const TOKEN_PATTERN =
   /(?<![\w/.-])(?:sk|pk|ghp|gho|xox[abp]|AKIA|AIza)[\w-]{10,}|(?<![\w/-])[A-Za-z0-9_-]{28,}(?![\w/-])/g
 
-/** Punctuation that closes a sentence rather than a path or a link. */
+/** Punctuation that closes a sentence rather than a path or a link. A last
+ *  segment `..` is the path's own, never punctuation: it climbs. */
 function splitTrailing(rest: string): [string, string] {
   const match = /[.,;:!?]+$/.exec(rest)
-  return match ? [rest.slice(0, match.index), match[0]] : [rest, '']
+  if (!match) return [rest, '']
+  const climbs = /[\\/]$/.test(rest.slice(0, match.index)) && /^\.\.(?!\.)/.test(match[0])
+  const cut = match.index + (climbs ? 2 : 0)
+  return [rest.slice(0, cut), rest.slice(cut)]
+}
+
+/** An absolute POSIX path with its `.` and `..` segments resolved and its
+ *  separators single, a last one kept, as `path.posix.normalize` writes it;
+ *  a `..` at `/` stays there. Pure. */
+function normalised(absolute: string): string {
+  const parts: string[] = []
+  for (const part of absolute.split('/')) {
+    if (part === '..') parts.pop()
+    else if (part !== '' && part !== '.') parts.push(part)
+  }
+  const path = `/${parts.join('/')}`
+  return path !== '/' && absolute.endsWith('/') ? `${path}/` : path
 }
 
 function decoded(path: string): string {
@@ -138,9 +159,14 @@ export function scrubPaths(text: string, context: ScrubContext): string {
   const trimmed = context.workspaceRoot.replace(/\/+$/, '')
   const root = trimmed.startsWith('/') && trimmed.length > 1 ? trimmed : null
   const home = context.home.replace(/\/+$/, '')
+  const under = (path: string): boolean => path === root || path.startsWith(`${root}/`)
+  // A path that starts in the workspace is decided on its normalised form:
+  // one that climbs above the root is outside.
   const inside = (absolute: string): string | null => {
-    if (!root || (absolute !== root && !absolute.startsWith(`${root}/`))) return null
-    return absolute.slice(root.length).replace(/^\/+/, '') || '.'
+    if (!root || !under(absolute)) return null
+    const resolved = normalised(absolute)
+    if (!under(resolved)) return null
+    return resolved.slice(root.length).replace(/^\/+/, '') || '.'
   }
   const workspace = root
     ? String.raw`${START}(?<root>${escapeRegExp(root)})${ROOT_END}(?<rest>(?:/+${PART})*/*)`
@@ -154,7 +180,7 @@ export function scrubPaths(text: string, context: ScrubContext): string {
     if (groups.scheme !== undefined) return scrubLink(groups.scheme, groups.link ?? '', inside)
     if (groups.root !== undefined) {
       const [rest, trailing] = splitTrailing(groups.rest ?? '')
-      return `${rest.replace(/^\/+/, '') || '.'}${trailing}`
+      return `${inside(`${groups.root}${rest}`) ?? PATH_MARK}${trailing}`
     }
     if (groups.tilde !== undefined) {
       const [rest, trailing] = splitTrailing(groups.tilde)
