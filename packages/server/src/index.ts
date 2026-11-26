@@ -96,6 +96,7 @@ export {
   ArtefactRefusal,
   type ArtefactsService,
   type ArtefactEvent,
+  type SlidelessSignInOptions,
   artefactHandlers,
   ArtefactsEventsLive
 } from './artefacts'
