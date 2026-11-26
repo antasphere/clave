@@ -52,7 +52,8 @@ import {
  *
  * On open the plain listing is drawn at once, then each sign-in is tried on
  * its site (`--check`), and again whenever the Settings view is shown again
- * (it stays mounted under the others); Refresh tries them again. Each site is a row keyed by
+ * (it stays mounted under the others); Refresh tries them again, and so does
+ * a site added (its add answers the plain listing). Each site is a row keyed by
  * its origin, saying only what is known of it, with the one action its fix
  * offers: a sign-in with an e-mail code, a key to paste, a check, a removal.
  * A sign-in code and a key live in the form that asks for them and nowhere
@@ -278,7 +279,7 @@ function AccountsBody({ view }: { view: AccountsView }): ReactElement {
   return (
     <>
       {heading && (
-        <p className="settings-row-value" data-slideless-heading>
+        <p className="settings-page-description" data-slideless-heading>
           {heading}
         </p>
       )}
@@ -1008,6 +1009,9 @@ function AddSiteSection({ view }: { view: AccountsView }): ReactElement {
     try {
       await view.run(() => api().addSlidelessSite(wanted, serverIdOf(view.machine)))
       setUrl('')
+      // The add answers the plain listing: the page checks every sign-in again,
+      // as Refresh does, so no row loses what its check said.
+      void view.check()
     } catch (failure) {
       setError(refusalText(failure))
     } finally {

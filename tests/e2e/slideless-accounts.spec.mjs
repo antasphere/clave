@@ -833,7 +833,7 @@ export async function run(t) {
     )
     t.equal(
       '8. the dialog says the site and the version',
-      await text(dialog.locator('[data-create-link-made-where]')),
+      await text(dialog.locator('[data-create-link-where]')),
       `On Decks (${DECKS}) · version 3`
     )
     t.equal(

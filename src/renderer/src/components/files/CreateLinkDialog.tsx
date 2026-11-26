@@ -34,8 +34,10 @@ import { SettingsSelect, Toggle } from '../settings/primitives'
  * with the settings chosen here. A deck already made stays on its own site,
  * so the site is chosen only for an artefact that has none yet (preselected
  * with the machine's « New links go to »), and again when the deck is no
- * longer on its site (« Make a new deck »). Under the form, the links Clave
- * made to the deck, each to copy or revoke.
+ * longer on its site (« Make a new deck »). Once a link is made, the primary
+ * says it makes another (« Create another link »): each press is a new live
+ * link. Under the form, the links Clave made to the deck, each to copy or
+ * revoke.
  *
  * On the app's own modal, as `AddLocationDialog` is: the `.modal-card`
  * surface, the title block, the system's fields and switches, and the
@@ -446,11 +448,6 @@ export function CreateLinkDialog({
                   Open
                 </button>
               </div>
-              {deck.site && (
-                <p className="mt-1.5 text-xs text-text-tertiary" data-create-link-made-where>
-                  {where(deck.site, deck.version)}
-                </p>
-              )}
             </div>
           )}
 
@@ -558,7 +555,7 @@ export function CreateLinkDialog({
             className="btn-dialog text-action disabled:opacity-40 disabled:cursor-not-allowed"
             data-create-link-submit
           >
-            {gone ? 'Make a new deck' : 'Create link'}
+            {gone ? 'Make a new deck' : made ? 'Create another link' : 'Create link'}
           </button>
         </div>
       </div>
