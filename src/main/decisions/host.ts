@@ -21,8 +21,9 @@ import type { TabProjectOutcome } from './tab-project'
  *
  * Each tab is read on its own and none fails the others. A tab whose record
  * already holds a reading made on the same basis (what Jev would read, and
- * the model) is answered from it, with no request. A tab that gets no new
- * reading keeps the one its record had.
+ * the model) is answered from it, with no request; one an earlier call is
+ * still reading on that basis waits for that reading and answers it. A tab
+ * that gets no new reading keeps the one its record had.
  */
 
 /** The fields of a session record the host reads (`SessionRecord` of
@@ -126,6 +127,9 @@ export function hostDecisions(options: HostDecisionsOptions): HostDecisions {
       const files = options.files()
       return files ? projectOptionsOf(files, workspace) : []
     })
+  /** The readings still out, by tab and basis: one request per tab and
+   *  basis at a time, whatever the calls that ask it. */
+  const inFlight = new Map<string, Promise<TabProjectsOnHost>>()
 
   const readOne = async (
     sessionId: string,
@@ -170,18 +174,39 @@ export function hostDecisions(options: HostDecisionsOptions): HostDecisions {
     const basis = basisOf(request, tabProjectDecision.model)
     // Read on the same basis already: answered as it is, Jev not asked.
     if (old && old.basis === basis) return { sessionId, projects: old, written: false }
-    const outcome = await run(input)
-    if (!outcome.ok) return kept(outcome.reason)
-    const projects: TabProjects = {
-      status: outcome.value.status,
-      picks: outcome.value.picks,
-      fits: outcome.value.fits,
-      readAt: now(),
-      model: outcome.model,
-      basis
+    // Being read on this basis by a call still out (a tab joined a group
+    // while its first read was away): that reading is the answer.
+    const flightKey = `${sessionId}\n${basis}`
+    const pending = inFlight.get(flightKey)
+    if (pending) {
+      const first = await pending
+      return {
+        sessionId,
+        projects: first.projects,
+        ...(first.reason && { reason: first.reason }),
+        written: false
+      }
     }
-    if (!options.setProjects(sessionId, projects)) return kept('failed')
-    return { sessionId, projects, written: true }
+    const flight = (async (): Promise<TabProjectsOnHost> => {
+      const outcome = await run(input)
+      if (!outcome.ok) return kept(outcome.reason)
+      const projects: TabProjects = {
+        status: outcome.value.status,
+        picks: outcome.value.picks,
+        fits: outcome.value.fits,
+        readAt: now(),
+        model: outcome.model,
+        basis
+      }
+      if (!options.setProjects(sessionId, projects)) return kept('failed')
+      return { sessionId, projects, written: true }
+    })()
+    inFlight.set(flightKey, flight)
+    try {
+      return await flight
+    } finally {
+      if (inFlight.get(flightKey) === flight) inFlight.delete(flightKey)
+    }
   }
 
   return {

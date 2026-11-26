@@ -187,6 +187,41 @@ describe('a tab read on the host', () => {
     expect(stale.runs).toHaveLength(1)
   })
 
+  it('a second call while the tab is being read on the same basis waits: one request, both answered', async () => {
+    let release: () => void = () => undefined
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const runs: TabProjectInput[] = []
+    const s = setup(
+      { a: claudeTab() },
+      {
+        run: async (input) => {
+          runs.push(input)
+          await held
+          return { ok: true, value: decided, model: 'jev-1.14.0', ms: 220, inputTokens: 900 }
+        }
+      }
+    )
+    const first = s.host.readTabProjects(['a'])
+    await vi.waitFor(() => expect(runs).toHaveLength(1))
+    // The second call overlaps the first: a tab joined the group meanwhile.
+    const second = s.host.readTabProjects(['a'])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    release()
+    const [[one], [two]] = await Promise.all([first, second])
+    const reading: TabProjects = {
+      status: 'decided',
+      picks: decided.picks,
+      fits: 0.93,
+      readAt: 5_000,
+      model: 'jev-1.14.0',
+      basis: basisFor([quill, atlas])
+    }
+    expect(runs).toHaveLength(1)
+    expect(one).toEqual({ sessionId: 'a', projects: reading, written: true })
+    expect(two).toEqual({ sessionId: 'a', projects: reading, written: false })
+    expect(s.written).toHaveLength(1)
+  })
+
   it('a failure leaves the record as it was and answers its old reading with the reason', async () => {
     const held: TabProjects = {
       status: 'decided',
