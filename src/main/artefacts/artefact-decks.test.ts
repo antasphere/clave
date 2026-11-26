@@ -224,6 +224,26 @@ describe('a record file that cannot be read', () => {
     expect(readFileSync(file).equals(before)).toBe(true)
     expect(readdirSync(join(file, '..'))).toEqual(['artefact-decks.json'])
   })
+
+  it('refuses a version 1 record whose decks are no map, on a read and on a write, the file as it was', () => {
+    for (const text of ['{"v":1,"decks":"x"}', '{"v":1}']) {
+      const file = fileIn()
+      writeFileSync(file, text, { mode: 0o600 })
+      const decks = new ArtefactDecks(fileDecksStorage(file))
+      const sentence = `ArtefactRefusal: ${recordUnreadable(file, 'it is not a version 1 record')}`
+      const refused = (call: () => unknown): string => {
+        try {
+          call()
+          return 'no refusal'
+        } catch (error) {
+          return `${(error as Error).name}: ${(error as Error).message}`
+        }
+      }
+      expect(refused(() => decks.get('/work/a'))).toBe(sentence)
+      expect(refused(() => decks.pushed('/work/a', push(1)))).toBe(sentence)
+      expect(readFileSync(file, 'utf8')).toBe(text)
+    }
+  })
 })
 
 /**
