@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { gzipSync } from 'node:zlib'
 import { ForwardRegistry } from '@clave/server/forward-registry'
 import type { ArtefactEvent } from '@clave/contract/artefacts'
 import type { AgentState } from '@clave/contract/sessions'
+import { recordUnreadable } from './artefact-decks'
 import { ArtefactLinks, MAX_LINKS, MAX_PER_SESSION, type LinksStorage } from './links'
 import {
   HOLD_TTL_MS,
@@ -1022,6 +1024,22 @@ describe('the Slideless accounts and the links, through the service', () => {
     }
     expect(await service.artefactDeck('s1', deck)).toMatchObject({ deckId: 'd1', links: [{}] })
     expect(await service.revokeArtefactLink('s1', deck, 't1')).toMatchObject({ links: [] })
+  })
+
+  it('refuses the deck view of its own record of the shared pages while that file cannot be read', async () => {
+    const { service, dataDir, deck } = wired()
+    await service.open('s1', deck)
+    await service.shareArtefact('s1', deck, { site: DECKS, link: settings })
+    const file = join(dataDir, 'artefact-decks.json')
+    chmodSync(file, 0o000)
+    try {
+      expect(await refusal(service.artefactDeck('s1', deck))).toBe(
+        refused(recordUnreadable(file, 'EACCES: permission denied'))
+      )
+    } finally {
+      chmodSync(file, 0o600)
+    }
+    expect(await service.artefactDeck('s1', deck)).toMatchObject({ deckId: 'd1', links: [{}] })
   })
 
   it('refuses the links of an artefact the session does not show', async () => {
