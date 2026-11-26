@@ -117,6 +117,7 @@ function harness(): {
         spawn,
         log: (level, message) => logs.push(`${level}: ${message}`),
         backoffMs: [5, 10],
+        missingRetryMs: 30,
         startTimeoutMs: 200
       })
   }
@@ -241,6 +242,38 @@ describe('Viewer', () => {
     expect(other.note()).toBe('No copy here')
     await viewer.stop()
     await other.stop()
+  })
+
+  it('looks again for a copy found missing, says so once, and runs it once installed, with no new start', async () => {
+    const h = harness()
+    let installed = false
+    let asked = 0
+    const viewer = h.make(null, async () => {
+      asked++
+      return installed ? COMMAND : { missing: NOTES.missing }
+    })
+    expect(await viewer.start()).toMatchObject({ kind: 'missing' })
+    await tick(45)
+    expect(asked).toBe(2)
+    expect(viewer.state).toMatchObject({ kind: 'missing' })
+    expect(h.logs.filter((line) => line.includes(NOTES.missing))).toHaveLength(1)
+    installed = true
+    await tick(45)
+    expect(asked).toBe(3)
+    expect(h.children).toHaveLength(1)
+    h.children[0]!.up(5020)
+    expect(await viewer.ready(100)).toMatchObject({ kind: 'up', port: 5020 })
+    await viewer.stop()
+    // Stopped: no look after it.
+    const stopped = h.make(null, async () => {
+      asked++
+      return { missing: NOTES.missing }
+    })
+    await stopped.start()
+    const before = asked
+    await stopped.stop()
+    await tick(80)
+    expect(asked).toBe(before)
   })
 
   it('asks for the command again at every start: a copy installed since is the one the next start runs', async () => {

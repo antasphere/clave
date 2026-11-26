@@ -7,7 +7,7 @@ import { NOTES } from './viewer'
 
 /**
  * The viewer's command from what the plugin host tells the plugin process (PRDCT-4499): the
- * override when its file exists, else the copy installed under the folder named, run by the
+ * override when it is set (no copy when its file is not there), else the copy installed under the folder named, run by the
  * Node named under the host named; any of them missing, nothing to run. Files in a folder of
  * the test's own, no process started.
  */
@@ -59,7 +59,7 @@ describe("the Analytics viewer's command", () => {
     })
   })
 
-  it('runs the override when its file exists, else the installed copy', () => {
+  it('runs the override when its file exists, and nothing when it names no file, as the app does', () => {
     const bin = install('0.15.0')
     const override = join(dir, 'checkout', 'dist', 'bin.js')
     mkdirSync(join(dir, 'checkout', 'dist'), { recursive: true })
@@ -67,7 +67,9 @@ describe("the Analytics viewer's command", () => {
     const told = { ...env, [SLIDELESS_ENV.override]: override }
     expect(slidelessCommand(told)).toMatchObject({ file: node, args: [host, override] })
     rmSync(override)
-    expect(slidelessCommand(told)).toMatchObject({ file: node, args: [host, bin] })
+    // The app's own rule (`resolveCli`): an override naming no file is no copy, never the installed one.
+    expect(slidelessCommand(told)).toEqual({ missing: NOTES.missing })
+    expect(slidelessCommand(env)).toMatchObject({ file: node, args: [host, bin] })
   })
 
   it('has nothing to run when the Node, the host or a copy is missing', () => {

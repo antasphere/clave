@@ -497,6 +497,21 @@ describe('a deck kept before records named their site: one look by its id (PRDCT
     expect(warnings[0]!.message).toContain('deck-1')
   })
 
+  it('takes nothing for gone on a look that did not say « not found »: the publish stops, no new deck, nothing written', async () => {
+    const h = publisher([refused('Error: not_found'), refused('Error: the site did not answer')], {
+      sites: [DECKS, CLOUD],
+      newLinksSite: DECKS
+    })
+    await expect(h.publisher.publish(h.input(kept))).rejects.toThrow(
+      `the routine's deck deck-1 could not be looked for on ${CLOUD} (the site did not answer), so the deck was not pushed`
+    )
+    expect(h.calls.map((c) => c.args)).toEqual([
+      versionsArgs(DECKS, 'deck-1'),
+      versionsArgs(CLOUD, 'deck-1')
+    ])
+    expect(h.saved).toEqual([])
+  })
+
   it('takes a deck for gone on a machine with no saved site, and says so when no site is chosen for new links', async () => {
     const none = publisher([pushed('new-1', 1), shared('https://s.example/new')], { sites: [] })
     expect((await none.publisher.publish(none.input(kept))).state.site).toBe(DECKS)

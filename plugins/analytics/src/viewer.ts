@@ -30,6 +30,8 @@ export const NOTES = {
 } as const
 
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]
+/** How long a viewer with no copy to run waits before it looks again. */
+export const MISSING_RETRY_MS = 30_000
 /** A run this long before an exit counts as healthy: the backoff starts over. */
 const HEALTHY_MS = 60_000
 /** The CLI prints its URL within this, or the start failed. */
@@ -98,6 +100,8 @@ export interface ViewerOptions {
   log?: (level: 'info' | 'warn', message: string) => void
   /** The waits between restarts, shortest first; the tests shorten them. */
   backoffMs?: readonly number[]
+  /** How long a viewer with no copy to run waits before it looks again; the tests shorten it. */
+  missingRetryMs?: number
   startTimeoutMs?: number
   now?: () => number
 }
@@ -149,7 +153,13 @@ export class Viewer {
   private readonly proc: ProcessLike
   private guard: (() => void) | null = null
 
+  /** A copy found missing is looked for again after this long. */
+  private readonly missingRetry: number
+  /** The missing copy already said in the log. */
+  private missingSaid = false
+
   constructor(private readonly options: ViewerOptions) {
+    this.missingRetry = options.missingRetryMs ?? MISSING_RETRY_MS
     this.spawn = options.spawn ?? (nodeSpawn as unknown as SpawnLike)
     this.backoff = options.backoffMs ?? BACKOFF_MS
     this.startTimeout = options.startTimeoutMs ?? START_TIMEOUT_MS
@@ -266,10 +276,23 @@ export class Viewer {
     }
     if (this.stopped) return this.current
     if ('missing' in command) {
+      // Said once, not at every look.
+      if (!this.missingSaid) this.options.log?.('warn', command.missing)
+      this.missingSaid = true
       this.current = { kind: 'missing', note: command.missing }
-      this.options.log?.('warn', command.missing)
+      // Looked for again in a while: the copy a machine installs in the background at its
+      // first boot is used once it is there, with no restart of the server or the plugin.
+      if (!this.restartTimer) {
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          if (this.stopped) return
+          this.attempt = this.run(port)
+        }, this.missingRetry)
+        this.restartTimer.unref?.()
+      }
       return this.current
     }
+    this.missingSaid = false
     const startedAt = this.now()
     const outcome = await new Promise<
       | { kind: 'up'; url: string; port: number; child: ChildLike }

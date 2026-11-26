@@ -11,7 +11,12 @@ import { join } from 'node:path'
 import { fileLinksStorage } from '../artefacts/links'
 import { ArtefactRefusal } from '../artefacts/refusal'
 import { createSlidelessAccounts } from '../artefacts/slideless-accounts'
-import { resolveCli, type ResolvedCli } from '../artefacts/slideless-cli'
+import {
+  resolveCli,
+  supportsAccounts,
+  tooOldFor,
+  type ResolvedCli
+} from '../artefacts/slideless-cli'
 import { runSlideless, type SlidelessRunDeps } from '../artefacts/slideless-run'
 import { SETTINGS_FILE, SlidelessSettings, normalOrigin } from '../artefacts/slideless-settings'
 import type { PublisherOptions } from './publisher'
@@ -32,10 +37,14 @@ export function ownSlideless(
   deps: OwnSlidelessDeps
 ): Pick<PublisherOptions, 'run' | 'newLinksSite' | 'sites'> {
   const cliDir = join(deps.dataDir, 'slideless', 'cli')
-  /** The copy when it is ready to run, else the refusal that says why not. */
+  /** The copy when it is ready to run, else the refusal that says why not: every call a
+   *  routine makes to a site runs on the release that names its site (0.15.0), as the
+   *  links do; an older copy never runs a listing (0.13 and 0.14 print part of each key). */
   const cli = (): ResolvedCli => {
     const resolved = resolveCli(cliDir, deps.env)
     if (!resolved.cli) throw new ArtefactRefusal(resolved.reason)
+    if (!supportsAccounts(resolved.cli.version))
+      throw new ArtefactRefusal(tooOldFor('routine decks', resolved.cli.version))
     return resolved.cli
   }
   const command: SlidelessRunDeps = {

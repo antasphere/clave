@@ -44,9 +44,9 @@ export function installedBin(cliDir: string): string | null {
 
 /**
  * What the viewer runs: the Node with `[<host>, <bin.js>]` and `ELECTRON_RUN_AS_NODE`, in the
- * plugin's own environment. The script is the override when it is set and its file exists,
- * else the installed copy; the Node, the host or the script missing, there is nothing to
- * run, and the note says so.
+ * plugin's own environment. The script is the override when it is set (nothing, when its
+ * file is not there), else the installed copy; the Node, the host or the script missing,
+ * there is nothing to run, and the note says so.
  */
 export function slidelessCommand(
   env: NodeJS.ProcessEnv = process.env
@@ -56,9 +56,13 @@ export function slidelessCommand(
   const host = named(SLIDELESS_ENV.host)
   const override = named(SLIDELESS_ENV.override)
   const cliDir = named(SLIDELESS_ENV.cliDir)
+  // The app's own rule (`resolveCli`): an override is the copy when its file exists, and no
+  // copy at all when it names none, never a fall back to the installed one.
   const bin =
-    override !== null && existsSync(override)
-      ? override
+    override !== null
+      ? existsSync(override)
+        ? override
+        : null
       : cliDir !== null
         ? installedBin(cliDir)
         : null

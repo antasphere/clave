@@ -115,4 +115,17 @@ describe("the publisher's road to the server's own copy", () => {
     const own = ownSlideless({ dataDir, execPath: EXEC_PATH, env: ENV, spawn: fakeSpawn().spawn })
     await expect(own.sites()).rejects.toThrow(/0\.15\.0 or later/)
   })
+
+  it('runs nothing on a copy older than 0.15.0: a routine deck names its site, which older copies cannot', async () => {
+    install('0.14.1')
+    const { spawn, calls } = fakeSpawn()
+    const own = ownSlideless({ dataDir, execPath: EXEC_PATH, env: ENV, spawn })
+    await expect(
+      own.run(['--api-url', 'https://decks.example.test', '--json', 'push'], {
+        cwd: dataDir,
+        timeoutMs: 1000
+      })
+    ).rejects.toThrow("Clave's Slideless is 0.14.1; routine decks need 0.15.0 or later")
+    expect(calls).toEqual([])
+  })
 })

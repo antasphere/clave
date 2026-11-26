@@ -93,6 +93,9 @@ export const notInstalled = (what: 'pushed' | 'shared'): string =>
 /** The sentence of a new deck with no site to go to. */
 export const NO_SITE_CHOSEN =
   'no site is chosen for new links on this server (Settings › Slideless), so the deck was not pushed'
+/** The sentence of a kept deck a site could not be asked about. */
+export const notLookedFor = (deckId: string, origin: string, result: ExecResult): string =>
+  `the routine's deck ${deckId} could not be looked for on ${origin} (${runFailure(result)}), so the deck was not pushed`
 /** The sentence of a kept deck more than one site knows. */
 export const onSeveralSites = (deckId: string, origins: readonly string[]): string =>
   `the routine's deck ${deckId} is on several sites of this server (${origins.join(', ')}); its site was not guessed`
@@ -156,7 +159,10 @@ export class SlidelessPublisher implements RoutinePublisher {
   ): Promise<ExecResult> {
     try {
       return await this.options.run(args, { cwd, timeoutMs })
-    } catch {
+    } catch (error) {
+      // The copy's own refusal says why (not installed, too old); anything else is the copy missing.
+      if (error instanceof Error && error.name === 'ArtefactRefusal' && error.message)
+        throw new PublishFailure(`the deck was not ${what}: ${error.message}`)
       throw new PublishFailure(notInstalled(what))
     }
   }
@@ -174,7 +180,9 @@ export class SlidelessPublisher implements RoutinePublisher {
   }
 
   /** The sites of the machine that know a deck by its id: every saved site
-   *  asked, in order, each once. */
+   *  asked, in order, each once. Only the site's own « not found » counts as
+   *  absent: any other failure (a site down, a sign-in refused) stops the
+   *  publish, so a deck is never taken for gone on an answer that did not say so. */
   private async sitesOf(deckId: string, folder: string): Promise<string[]> {
     const origins = [...new Set((await this.options.sites()).map(normalOrigin))]
     const found: string[] = []
@@ -186,6 +194,7 @@ export class SlidelessPublisher implements RoutinePublisher {
         'pushed'
       )
       if (looked.code === 0) found.push(origin)
+      else if (!isGone(looked)) throw new PublishFailure(notLookedFor(deckId, origin, looked))
     }
     return found
   }

@@ -278,7 +278,7 @@ export function supportsAccounts(version: string): boolean {
 }
 
 /** The sentence a copy too old for the accounts or the links is refused with. */
-export function tooOldFor(what: 'accounts' | 'links', version: string): string {
+export function tooOldFor(what: 'accounts' | 'links' | 'routine decks', version: string): string {
   return `Clave's Slideless is ${version}; ${what} need ${MIN_ACCOUNTS_VERSION} or later: Settings › Software Update installs it.`
 }
 
