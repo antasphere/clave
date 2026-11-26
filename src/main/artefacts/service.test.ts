@@ -772,7 +772,19 @@ function fixtureRegistry(version: string): {
  * latest by itself at start, once a run, and never in place of the override.
  */
 describe('Clave’s own copy older than the accounts need', () => {
-  it('is updated from the registry at start, once a run, and never on the override', async () => {
+  type Registry = ReturnType<typeof fixtureRegistry>
+  /** A folder of the test's own: an artefact to open, data folders holding a copy
+   *  of Slideless at a version, and services over them that install on their own. */
+  const world = (): {
+    root: string
+    deck: string
+    dataWith: (name: string, version: string) => string
+    built: (
+      dataDir: string,
+      env: NodeJS.ProcessEnv,
+      offered: Registry
+    ) => { service: ArtefactServiceHandle; states: Array<[string, string | null]> }
+  } => {
     const root = mkdtempSync(join(tmpdir(), 'clave-artefact-floor-'))
     dirs.push(root)
     const deck = join(root, 'work', 'deck')
@@ -787,11 +799,10 @@ describe('Clave’s own copy older than the accounts need', () => {
       writeFileSync(join(cli, 'current.json'), JSON.stringify({ version }))
       return join(root, name)
     }
-    const registry = fixtureRegistry('0.15.0')
     const built = (
       dataDir: string,
       env: NodeJS.ProcessEnv,
-      offered = registry
+      offered: Registry
     ): { service: ArtefactServiceHandle; states: Array<[string, string | null]> } => {
       const service = createArtefactService({
         dataDir,
@@ -812,9 +823,31 @@ describe('Clave’s own copy older than the accounts need', () => {
       })
       return { service, states }
     }
+    return { root, deck, dataWith, built }
+  }
 
+  it('installs nothing at start for a copy already at the release the accounts need', async () => {
+    const { dataWith, built } = world()
+    const registry = fixtureRegistry('0.15.0')
+    registry.open()
+    const { service, states } = built(dataWith('data', '0.15.0'), {}, registry)
+    service.start()
+    await settle(100)
+    expect(registry.asked()).toEqual({ latest: 0, tarball: 0 })
+    expect(await service.slidelessState()).toEqual({
+      phase: 'ready',
+      version: '0.15.0',
+      error: null,
+      override: false
+    })
+    expect(states).toEqual([])
+  })
+
+  it('is updated from the registry at start, once a run, and never on the override', async () => {
+    const { root, deck, dataWith, built } = world()
+    const registry = fixtureRegistry('0.15.0')
     const dataDir = dataWith('data', '0.14.1')
-    const { service, states } = built(dataDir, {})
+    const { service, states } = built(dataDir, {}, registry)
     service.start()
     expect(await service.slidelessState()).toMatchObject({ phase: 'installing' })
     registry.open()
@@ -864,7 +897,11 @@ describe('Clave’s own copy older than the accounts need', () => {
     // Never on the override: the command it names is not Clave's to replace.
     const override = join(root, 'override-bin.js')
     writeFileSync(override, '')
-    const named = built(dataWith('data-override', '0.14.1'), { [CLI_OVERRIDE_ENV]: override })
+    const named = built(
+      dataWith('data-override', '0.14.1'),
+      { [CLI_OVERRIDE_ENV]: override },
+      registry
+    )
     named.service.start()
     await named.service.open('s1', deck)
     await settle(100)
