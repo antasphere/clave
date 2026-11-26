@@ -180,6 +180,9 @@ export function createArtefactShare(deps: ShareDeps): ArtefactShare {
     artefact: Artefact,
     request: ShareRequest
   ): Promise<ArtefactShareResult> => {
+    // The record first, before anything runs: a record that cannot be read
+    // refuses the share, so no page is pushed whose deck could not be recorded.
+    const record = deps.decks.get(artefact.target)
     // The machine's sites, listed once: a site named, and the site a folder's
     // link file names, must be one of them before anything reaches a site.
     let listing: SlidelessAccounts | null = null
@@ -190,7 +193,6 @@ export function createArtefactShare(deps: ShareDeps): ArtefactShare {
     const named = request.site?.trim() ? normalOrigin(request.site) : null
     if (named !== null && !(await machineSite(named)))
       throw new ArtefactRefusal(`${named} is not one of this machine's Slideless sites.`)
-    const record = deps.decks.get(artefact.target)
     // Which deck, and on which site.
     let site: string
     let deckId: string | null

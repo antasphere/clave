@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Artefact, ArtefactShareSettings } from '@clave/contract/artefacts'
-import { ArtefactDecks } from './artefact-decks'
+import { ArtefactDecks, DECKS_FILE, fileDecksStorage, recordUnreadable } from './artefact-decks'
 import {
   CHOOSE_SITE,
   CHOOSE_SITE_FOR_NEW_DECK,
@@ -74,6 +82,8 @@ interface Setup {
   slideless: FakeSlideless
   decks: ArtefactDecks
   dataDir: string
+  /** The record of the decks, a real file of the data folder. */
+  decksFile: string
   /** A folder artefact, and two single-file artefacts of one folder. */
   folder: string
   pages: string
@@ -168,7 +178,8 @@ function setup(
     run: slideless.run,
     settings: new SlidelessSettings(memory(), () => {})
   })
-  const decks = new ArtefactDecks(memory(), () => {})
+  const decksFile = join(dataDir, DECKS_FILE)
+  const decks = new ArtefactDecks(fileDecksStorage(decksFile))
   const share = createArtefactShare({
     dataDir,
     decks,
@@ -187,6 +198,7 @@ function setup(
     slideless,
     decks,
     dataDir,
+    decksFile,
     folder,
     pages,
     fileA,
@@ -712,5 +724,34 @@ describe('an artefact’s deck', () => {
       )
     ).toBe(sentence)
     expect(s.slideless.calls).toEqual([])
+  })
+})
+
+describe('a record of the decks that cannot be read', () => {
+  it('refuses the deck view, a share and a revoke with its sentence before anything runs, and changes nothing', async () => {
+    const s = setup()
+    await s.share.share({ sessionId: 's1', target: s.folder, site: DECKS, link: defaults })
+    const before = readFileSync(s.decksFile)
+    const ran = s.slideless.calls.length
+    const sentence = `ArtefactRefusal: ${recordUnreadable(
+      s.decksFile,
+      `EACCES: permission denied, open '${s.decksFile}'`
+    )}`
+    chmodSync(s.decksFile, 0o000)
+    try {
+      for (const call of [
+        () => s.share.deck('s1', s.folder),
+        () => s.share.share({ sessionId: 's1', target: s.folder, link: defaults }),
+        () => s.share.share({ sessionId: 's1', target: s.fileA, site: DECKS, link: defaults }),
+        () => s.share.revoke('s1', s.folder, 't1')
+      ])
+        expect(await refusal(call())).toBe(sentence)
+    } finally {
+      chmodSync(s.decksFile, 0o600)
+    }
+    // No listing, no link file read, no push: nothing ran, and the record is as it was.
+    expect(s.slideless.calls).toHaveLength(ran)
+    expect(readFileSync(s.decksFile).equals(before)).toBe(true)
+    expect((await s.share.deck('s1', s.folder)).links.map((link) => link.tokenId)).toEqual(['t1'])
   })
 })

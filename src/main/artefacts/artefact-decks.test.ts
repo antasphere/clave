@@ -1,14 +1,32 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ArtefactShareLink } from '@clave/contract/artefacts'
-import { ArtefactDecks, MAX_DECKS, MAX_LINKS_PER_DECK, type DeckPush } from './artefact-decks'
-import { fileLinksStorage, type LinksStorage } from './links'
+import {
+  ArtefactDecks,
+  fileDecksStorage,
+  MAX_DECKS,
+  MAX_LINKS_PER_DECK,
+  recordUnreadable,
+  type DeckPush,
+  type DecksStorage
+} from './artefact-decks'
 
 /** The record of the artefacts' decks and the links Clave made (PRDCT-4266). */
-const memory = (initial: string | null = null): LinksStorage & { text: string | null } => {
+const memory = (initial: string | null = null): DecksStorage & { text: string | null } => {
   const store = {
+    file: '/srv/clave-data/artefact-decks.json',
     text: initial,
     read: () => store.text,
     write: (text: string) => {
@@ -86,16 +104,35 @@ describe('the decks record', () => {
     expect(all['/work/deck-2']).toBeDefined()
   })
 
-  it('reads an unreadable document as empty, says it once, and replaces it at the next write', () => {
-    const logged: string[] = []
-    const storage = memory('{ not json')
-    const decks = new ArtefactDecks(storage, (line) => logged.push(line))
-    expect(decks.all()).toEqual({})
-    expect(decks.get('/work/deck')).toBeUndefined()
-    expect(logged).toHaveLength(1)
-    decks.pushed('/work/deck', push(1))
-    expect(new ArtefactDecks(storage).get('/work/deck')).toEqual({ ...push(1), links: [] })
-    expect(new ArtefactDecks(memory('{"v":2,"decks":{}}'), () => {}).all()).toEqual({})
+  it('refuses every read and every write of a record that is not one, and changes nothing', () => {
+    for (const text of ['{ not json', '{"v":2,"decks":{}}', 'null', '[]']) {
+      const storage = memory(text)
+      const decks = new ArtefactDecks(storage)
+      const refused = (call: () => unknown): string => {
+        try {
+          call()
+          return 'no refusal'
+        } catch (error) {
+          return `${(error as Error).name}: ${(error as Error).message}`
+        }
+      }
+      for (const call of [
+        () => decks.all(),
+        () => decks.get('/work/deck'),
+        () => decks.pushed('/work/deck', push(1)),
+        () => decks.addLink('/work/deck', link(1)),
+        () => decks.removeLink('/work/deck', 't1')
+      ])
+        expect(refused(call)).toMatch(
+          /^ArtefactRefusal: Clave's record of the shared pages \(\/srv\/clave-data\/artefact-decks\.json\) could not be read: .+\. Nothing was changed\.$/
+        )
+      expect(storage.text).toBe(text)
+    }
+    expect(
+      recordUnreadable('/srv/clave-data/artefact-decks.json', 'it is not a version 1 record')
+    ).toBe(
+      "Clave's record of the shared pages (/srv/clave-data/artefact-decks.json) could not be read: it is not a version 1 record. Nothing was changed."
+    )
   })
 
   it('drops what is no deck and no link, and reads a deck’s last fifty links', () => {
@@ -116,11 +153,13 @@ describe('the decks record', () => {
     expect(all['/work/ok']!.links).toEqual(many.slice(-MAX_LINKS_PER_DECK))
   })
 
-  it('writes the file owner-only through a rename', () => {
+  it('reads a missing file as an empty record, then writes it owner-only through a rename', () => {
     const dir = mkdtempSync(join(tmpdir(), 'clave-artefact-decks-'))
     dirs.push(dir)
     const file = join(dir, 'data', 'artefact-decks.json')
-    const decks = new ArtefactDecks(fileLinksStorage(file))
+    const decks = new ArtefactDecks(fileDecksStorage(file))
+    expect(decks.all()).toEqual({})
+    expect(existsSync(file)).toBe(false)
     decks.pushed('/work/deck', push(1))
     decks.addLink('/work/deck', link(1))
     expect(statSync(file).mode & 0o777).toBe(0o600)
@@ -129,6 +168,60 @@ describe('the decks record', () => {
       v: 1,
       decks: { '/work/deck': { ...push(1), links: [link(1)] } }
     })
-    expect(new ArtefactDecks(fileLinksStorage(file)).get('/work/deck')!.links).toEqual([link(1)])
+    expect(new ArtefactDecks(fileDecksStorage(file)).get('/work/deck')!.links).toEqual([link(1)])
+  })
+})
+
+/**
+ * A record file that exists and cannot be read (PRDCT-4266, the rule of the
+ * command's own profiles file): an error naming the file, never an empty
+ * record, and nothing written over it, since it holds every link's token.
+ */
+describe('a record file that cannot be read', () => {
+  const unreadable = (file: string): RegExp =>
+    new RegExp(
+      `^Clave's record of the shared pages \\(${file.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}\\) could not be read: .+\\. Nothing was changed\\.$`
+    )
+  const fileIn = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'clave-artefact-decks-'))
+    dirs.push(dir)
+    mkdirSync(join(dir, 'data'))
+    return join(dir, 'data', 'artefact-decks.json')
+  }
+
+  it('refuses the deck view and a push while it cannot be opened, and keeps every deck once it can', () => {
+    const file = fileIn()
+    const decks = new ArtefactDecks(fileDecksStorage(file))
+    decks.pushed('/work/a', push(1))
+    decks.addLink('/work/a', link(1))
+    decks.pushed('/work/b', push(2))
+    const before = readFileSync(file)
+    chmodSync(file, 0o000)
+    try {
+      expect(() => decks.get('/work/a')).toThrow(unreadable(file))
+      expect(() => decks.pushed('/work/c', push(3))).toThrow(unreadable(file))
+      expect(() => decks.addLink('/work/a', link(2))).toThrow(unreadable(file))
+      expect(() => decks.removeLink('/work/a', 't1')).toThrow(unreadable(file))
+    } finally {
+      chmodSync(file, 0o600)
+    }
+    expect(readFileSync(file).equals(before)).toBe(true)
+    const all = new ArtefactDecks(fileDecksStorage(file)).all()
+    expect(Object.keys(all).sort()).toEqual(['/work/a', '/work/b'])
+    expect(all['/work/a']!.links).toEqual([link(1)])
+  })
+
+  it('refuses reads and writes of a document that is not JSON, the file byte for byte as it was', () => {
+    const file = fileIn()
+    writeFileSync(file, '{ "v": 1, "decks": { not json', { mode: 0o600 })
+    const before = readFileSync(file)
+    const decks = new ArtefactDecks(fileDecksStorage(file))
+    expect(() => decks.all()).toThrow(unreadable(file))
+    expect(() => decks.get('/work/a')).toThrow(unreadable(file))
+    expect(() => decks.pushed('/work/a', push(1))).toThrow(unreadable(file))
+    expect(() => decks.addLink('/work/a', link(1))).toThrow(unreadable(file))
+    expect(() => decks.removeLink('/work/a', 't1')).toThrow(unreadable(file))
+    expect(readFileSync(file).equals(before)).toBe(true)
+    expect(readdirSync(join(file, '..'))).toEqual(['artefact-decks.json'])
   })
 })

@@ -8,16 +8,22 @@
  *       "pushedAt", "links": [{ "tokenId", "name", "url", "createdAt",
  *       "expiresAt", "pinnedVersion", "hasPassword" }, …] } } }
  *
- * Kept over a storage of one text, as the links are (`links.ts`): an
- * unreadable document reads as empty, said once in the log, and the next
- * write replaces it; the file is owner-only, written through a rename
- * (`fileLinksStorage`), since a link's URL is a bearer. Bounded: at most
- * `MAX_DECKS` decks, the one pushed longest ago going first (never the one
- * being written), and `MAX_LINKS_PER_DECK` links per deck, its oldest going
- * first. A deck pushed anew keeps its links; a new deck starts with none.
+ * Kept over a storage of one text, as the links are (`links.ts`), but with
+ * the rule of the command's own profiles file: a record that EXISTS and
+ * cannot be read or parsed is an error, never an empty record, and nothing
+ * is written over it, since it holds every link's revocation token. Every
+ * read and every write is then refused with the sentence naming the file
+ * (`recordUnreadable`); only a missing file is an empty record. The file is
+ * owner-only, written through a rename (`fileDecksStorage`), since a link's
+ * URL is a bearer. Bounded: at most `MAX_DECKS` decks, the one pushed longest
+ * ago going first (never the one being written), and `MAX_LINKS_PER_DECK`
+ * links per deck, its oldest going first. A deck pushed anew keeps its
+ * links; a new deck starts with none.
  */
+import { readFileSync } from 'node:fs'
 import type { ArtefactShareLink } from '@clave/contract/artefacts'
-import type { LinksStorage } from './links'
+import { fileLinksStorage, type LinksStorage } from './links'
+import { ArtefactRefusal } from './refusal'
 import { normalOrigin } from './slideless-settings'
 
 export const DECKS_FILE = 'artefact-decks.json'
@@ -40,6 +46,35 @@ export interface DeckRecord {
 
 /** What a push records of a deck: everything but its links. */
 export type DeckPush = Omit<DeckRecord, 'links'>
+
+/** The record's one text, and the file it is (named when it cannot be read).
+ *  `read` answers null only for a record that does not exist yet. */
+export interface DecksStorage extends LinksStorage {
+  readonly file: string
+}
+
+/** The sentence of a record that exists and cannot be read: nothing was changed. */
+export const recordUnreadable = (file: string, reason: string): string =>
+  `Clave's record of the shared pages (${file}) could not be read: ${reason.replace(/[.\s]+$/, '')}. Nothing was changed.`
+
+/** The decks record as a file, owner-only, written through a rename as the
+ *  links document is (`fileLinksStorage`); unlike it, only a missing file
+ *  reads as none: any other failure to read it is thrown. */
+export function fileDecksStorage(file: string): DecksStorage {
+  const { write } = fileLinksStorage(file)
+  return {
+    file,
+    read: () => {
+      try {
+        return readFileSync(file, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      }
+    },
+    write
+  }
+}
 
 const isLink = (value: unknown): value is ArtefactShareLink => {
   if (typeof value !== 'object' || value === null) return false
@@ -93,13 +128,7 @@ const recordOf = (value: unknown): DeckRecord | null => {
 }
 
 export class ArtefactDecks {
-  /** The unreadable text already said in the log: said once, not at every read. */
-  private reported: string | null = null
-
-  constructor(
-    private readonly storage: LinksStorage,
-    private readonly log: (message: string) => void = (message) => console.warn(message)
-  ) {}
+  constructor(private readonly storage: DecksStorage) {}
 
   /** The deck of an artefact, by its absolute target. */
   get(target: string): DeckRecord | undefined {
@@ -152,27 +181,37 @@ export class ArtefactDecks {
     return record
   }
 
+  /** The record's decks; a missing file is none. A file that exists and cannot
+   *  be read or parsed is refused, so that every write, which reads first,
+   *  leaves it as it is. */
   private read(): Record<string, DeckRecord> {
-    const text = this.storage.read()
-    if (text === null) return {}
+    let parsed: unknown
     try {
-      const parsed = JSON.parse(text) as { v?: unknown; decks?: unknown }
-      if (parsed.v !== 1 || typeof parsed.decks !== 'object' || parsed.decks === null)
-        throw new Error('not a version 1 decks document')
-      const decks: Record<string, DeckRecord> = {}
-      for (const [target, value] of Object.entries(parsed.decks as Record<string, unknown>)) {
-        const record = recordOf(value)
-        if (record) decks[target] = record
-      }
-      return decks
+      const text = this.storage.read()
+      if (text === null) return {}
+      parsed = JSON.parse(text)
     } catch (error) {
-      if (this.reported === text) return {}
-      this.reported = text
-      this.log(
-        `[artefacts] the decks document could not be read, read as empty: ${error instanceof Error ? error.message : String(error)}`
-      )
-      return {}
+      throw this.unreadable(error instanceof Error ? error.message : String(error))
     }
+    const document = parsed as { v?: unknown; decks?: unknown } | null
+    if (
+      typeof document !== 'object' ||
+      document === null ||
+      document.v !== 1 ||
+      typeof document.decks !== 'object' ||
+      document.decks === null
+    )
+      throw this.unreadable('it is not a version 1 record')
+    const decks: Record<string, DeckRecord> = {}
+    for (const [target, value] of Object.entries(document.decks as Record<string, unknown>)) {
+      const record = recordOf(value)
+      if (record) decks[target] = record
+    }
+    return decks
+  }
+
+  private unreadable(reason: string): ArtefactRefusal {
+    return new ArtefactRefusal(recordUnreadable(this.storage.file, reason))
   }
 
   /** Writes the document; over the bound, the decks pushed longest ago go, `keep` never. */

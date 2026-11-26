@@ -54,7 +54,7 @@ import type {
 import type { AgentState } from '@clave/contract/sessions'
 import type { ArtefactsService } from '@clave/server'
 import { finishesTurn } from '../../shared/turn-state'
-import { ArtefactDecks, DECKS_FILE } from './artefact-decks'
+import { ArtefactDecks, DECKS_FILE, fileDecksStorage } from './artefact-decks'
 import { createArtefactShare } from './artefact-share'
 import { fileLinksStorage, type ArtefactLinks } from './links'
 import { PreviewServers } from './preview-servers'
@@ -475,7 +475,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   })
   const sharing = createArtefactShare({
     dataDir: deps.dataDir,
-    decks: deps.decks ?? new ArtefactDecks(fileLinksStorage(join(deps.dataDir, DECKS_FILE)), log),
+    decks: deps.decks ?? new ArtefactDecks(fileDecksStorage(join(deps.dataDir, DECKS_FILE))),
     artefact: (sessionId, target) => {
       const link = linkOf(sessionId, target)
       if (!link) throw new ArtefactRefusal(NO_ARTEFACT_OPEN)
