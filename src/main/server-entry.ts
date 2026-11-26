@@ -99,6 +99,7 @@ import { standaloneSettingsSource } from './settings/standalone-source'
 // ── ADR 0004: the routines, this server's own scheduler ──
 import * as os from 'node:os'
 import { createRoutineService } from './routines/service'
+import { ownSlideless } from './routines/own-slideless'
 import { SlidelessPublisher } from './routines/publisher'
 import { ownServerName } from './server/server-name'
 import { launchFactsFromManagers } from './routines/facts'
@@ -138,6 +139,7 @@ import {
 // ── PRDCT-4472: the artefacts of this server's sessions, and the pages it forwards ──
 import { ForwardRegistry } from '@clave/server/forward-registry'
 import { REGISTRY_ENV, createArtefactService } from './artefacts/service'
+import { viewerCommand } from './artefacts/slideless-viewer-command'
 import { ArtefactLinks, fileLinksStorage } from './artefacts/links'
 import { TEST_NO_ACTIVATE } from './test-mode'
 // ── Wave 7, lane A: the launch facts of this server for its agent tools (PRDCT-4485) ──
@@ -433,10 +435,15 @@ async function main(): Promise<void> {
   // default), each plugin's `main` in a process forked under Node IPC. Built
   // AFTER the session host: a plugin's adapters register with this process's
   // session manager, so a session this server starts can run them.
+  // The Node this server runs its own copy of Slideless with (`--node`, as the
+  // terminal process gets it, else its own binary): the artefacts', the
+  // routines' and the plugins' alike (PRDCT-4472, PRDCT-4499).
+  const slidelessNode = arg('node') ?? process.execPath
   const plugins = standalonePlugins({
     dataDir,
     bundled: arg('plugins-bundled') ?? path.resolve(__dirname, '..', '..', 'plugins'),
     version,
+    node: slidelessNode,
     records: () => sessions.listAdoptableRecords()
   })
   installE2eHooks({ plugins })
@@ -513,14 +520,25 @@ async function main(): Promise<void> {
     pluginDir: contractPluginDir(RESOURCES_DIR),
     defaultTemplate: defaultReportDir(RESOURCES_DIR),
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
+    // This server's own copy under its data folder, run by the Node its
+    // artefact service gets, on the sites of this machine (PRDCT-4266).
     publisher: TEST_NO_ACTIVATE
       ? false
       : new SlidelessPublisher({
-          env: () => loginShellEnvAsync(),
+          ...ownSlideless({
+            dataDir,
+            execPath: slidelessNode,
+            env: process.env,
+            log: (line) => process.stderr.write(`clave-server: ${line}\n`)
+          }),
           log: (level, message) =>
             process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
         }),
-    viewer: TEST_NO_ACTIVATE ? false : { env: () => loginShellEnvAsync() },
+    // This server's own copy under its data folder, run by the Node its
+    // artefact service gets (PRDCT-4499).
+    viewer: TEST_NO_ACTIVATE
+      ? false
+      : { command: () => viewerCommand({ dataDir, execPath: slidelessNode, env: process.env }) },
     rehome: (sessionId, windowKey) => ptyManager.setSessionWindowKey(sessionId, windowKey),
     // A run reports through the agent tools: the daemon's own MCP once it
     // listens, the attached shell's address once it is announced (round 1,
@@ -544,7 +562,7 @@ async function main(): Promise<void> {
   const recordOf = sessionLaunchOf(ptyManager)
   const artefacts = createArtefactService({
     dataDir,
-    execPath: arg('node') ?? process.execPath,
+    execPath: slidelessNode,
     env: process.env,
     links: new ArtefactLinks(fileLinksStorage(path.join(dataDir, 'artefacts.json')), (line) =>
       log(line)

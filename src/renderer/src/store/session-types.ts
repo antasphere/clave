@@ -591,6 +591,7 @@ export type SettingsSection =
   | 'helpers'
   | 'styles'
   | 'integrations'
+  | 'slideless'
   | 'appearance'
   | 'keymaps'
   | 'updates'

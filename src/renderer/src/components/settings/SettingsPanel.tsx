@@ -66,6 +66,7 @@ import { INTERACTION_MODES, type InteractionMode } from '../../../../shared/harn
 import { HelpersSettings } from './HelpersSettings'
 import { WritingStylesSettings } from './WritingStylesSettings'
 import { IntegrationsSettings } from './IntegrationsSettings'
+import { SlidelessSettings } from './SlidelessSettings'
 import { AudioSettings } from './AudioSettings'
 import { ServersSettings } from './ServersSettings'
 import { MobileSettings } from './MobileSettings'
@@ -82,6 +83,7 @@ import {
   ServerHelpersSettings,
   ServerWritingStylesSettings,
   ServerIntegrationsSettings,
+  ServerSlidelessSettings,
   ServerUsageSettings
 } from './ServerPages'
 
@@ -249,6 +251,8 @@ export function SettingsPanel(): React.JSX.Element {
           (server ? <ServerWritingStylesSettings serverId={server} /> : <WritingStylesSettings />)}
         {settingsSection === 'integrations' &&
           (server ? <ServerIntegrationsSettings serverId={server} /> : <IntegrationsSettings />)}
+        {settingsSection === 'slideless' &&
+          (server ? <ServerSlidelessSettings serverId={server} /> : <SlidelessSettings />)}
         {settingsSection === 'appearance' && <AppearanceSettings />}
         {settingsSection === 'audio' && <AudioSettings />}
         {settingsSection === 'keymaps' && <KeymapSettings />}

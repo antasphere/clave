@@ -32,9 +32,12 @@ provider's own session id, the model, the workspace) and with the sidebar group 
 shell reports every window's groups to the service (`plugin-groups.ts`, from the shell's
 `SidebarLayouts` instance, in-process and attached alike), since the groups are the windows' and
 the service may run in the server's process. Each plugin process gets `CLAVE_PLUGIN_DATA_DIR`, a
-folder under the plugin root created at spawn. `plugins/analytics` (on by default) is the first
-plugin on this contract: it reads the transcripts of the sessions it is told about and serves its
-pages on loopback; its README says what it keeps and where.
+folder under the plugin root created at spawn, and where the server's own copy of Slideless is
+(`CLAVE_SLIDELESS_NODE`, `CLAVE_SLIDELESS_HOST`, `CLAVE_SLIDELESS_CLI_DIR`, and
+`CLAVE_SLIDELESS_CLI` when the host's own environment sets it; `pluginSlideless` in
+`plugin-host.ts`, the preview host written before the plugin starts). `plugins/analytics` (on
+by default) is the first plugin on this contract: it reads the transcripts of the sessions it is
+told about and serves its pages on loopback; its README says what it keeps and where.
 
 ## Two execution models, and they are not equally contained
 

@@ -590,7 +590,7 @@ export async function run(t, server = 'in-process') {
   writeFileSync(
     fake,
     `const fs = require('fs'), http = require('http');
-fs.appendFileSync(${JSON.stringify(starts)}, 'start\\n');
+fs.appendFileSync(${JSON.stringify(starts)}, (process.argv[3] || '') + '\\n');
 if (fs.readFileSync(${JSON.stringify(mode)}, 'utf8').trim() === 'fail') { console.error('Error: cannot start'); process.exit(1); }
 const a = process.argv.slice(2); const port = Number(a[a.indexOf('--port') + 1]);
 http.createServer((q, r) => { r.writeHead(200); r.end('<h1>fake</h1>'); }).listen(port, '127.0.0.1', () => {
@@ -606,8 +606,15 @@ http.createServer((q, r) => { r.writeHead(200); r.end('<h1>fake</h1>'); }).liste
     server,
     env: { CLAVE_TEST_SLIDELESS_REGISTRY: '', CLAVE_SLIDELESS_CLI: fake }
   }))
+  // The starts of this part's own previews, by the folder each serves: the Analytics viewer
+  // runs the same command since PRDCT-4499 (the override reaches every plugin process), and
+  // its `dev` of the decks root is no start of an artefact's preview.
   const count = () =>
-    existsSync(starts) ? readFileSync(starts, 'utf8').split('\n').filter(Boolean).length : 0
+    existsSync(starts)
+      ? readFileSync(starts, 'utf8')
+          .split('\n')
+          .filter((line) => line.startsWith(`${ROOT3}/`)).length
+      : 0
   try {
     await fakeAgent(win, ROOT3, WS3.id)
     const { client } = await agentClient(app, win, DIR3)

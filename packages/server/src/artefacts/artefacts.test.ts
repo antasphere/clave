@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Artefact, ArtefactEvent, SlidelessState } from '@clave/contract/artefacts'
+import type {
+  Artefact,
+  ArtefactDeck,
+  ArtefactEvent,
+  SlidelessAccounts,
+  SlidelessState
+} from '@clave/contract/artefacts'
 import { startEmbedded, type EmbeddedServer } from '../embedded'
 import { FakeSource, Peer } from '../test-support'
 import { ArtefactRefusal, type ArtefactsService } from './port'
@@ -38,6 +44,37 @@ const artefact: Artefact = {
 }
 const ready: SlidelessState = { phase: 'ready', version: '0.14.1', error: null, override: false }
 const LEASE = '0123456789abcdef0123456789abcdef'
+const accounts: SlidelessAccounts = {
+  machine: null,
+  cliVersion: '0.15.0',
+  defaultSite: null,
+  environment: { url: null, key: false, hubUrl: null },
+  logins: [],
+  profiles: [],
+  newLinksSite: null,
+  checked: false,
+  error: null,
+  needsUpdate: false
+}
+const deck: ArtefactDeck = {
+  target: '/work/deck',
+  site: 'https://decks.example.test',
+  deckId: 'd1',
+  title: 'deck',
+  version: 2,
+  pushedAt: '2026-11-26T10:00:00.000Z',
+  links: [],
+  linkedFolder: null,
+  staged: false
+}
+const settings = {
+  annotator: false,
+  forms: true,
+  download: true,
+  bar: true,
+  pdf: true,
+  pinVersion: false
+}
 
 function fakePort(): {
   port: ArtefactsService
@@ -85,6 +122,54 @@ function fakePort(): {
     installSlideless: async () => {
       asked.push(['installSlideless'])
       return ready
+    },
+    slidelessAccounts: async () => {
+      asked.push(['slidelessAccounts'])
+      return accounts
+    },
+    checkSlidelessAccounts: async () => {
+      asked.push(['checkSlidelessAccounts'])
+      return { ...accounts, checked: true }
+    },
+    addSlidelessSite: async (url) => {
+      asked.push(['addSlidelessSite', url])
+      if (url === 'nowhere') throw new ArtefactRefusal('Error: nowhere is not a site.')
+      return accounts
+    },
+    setNewLinksSite: async (origin) => {
+      asked.push(['setNewLinksSite', origin])
+      return { ...accounts, newLinksSite: origin }
+    },
+    runSlidelessFix: async (origin, kind) => {
+      asked.push(['runSlidelessFix', origin, kind])
+      return accounts
+    },
+    startSlidelessSignIn: async (origin, options) => {
+      asked.push(['startSlidelessSignIn', origin, options])
+      return { id: 'i1', origin, phase: 'code_asked', email: options.email ?? null, message: null }
+    },
+    answerSlidelessSignIn: async (id, code) => {
+      asked.push(['answerSlidelessSignIn', id, code])
+      return { id, origin: 'https://decks.example.test', phase: 'done', email: null, message: null }
+    },
+    cancelSlidelessSignIn: async (id) => {
+      asked.push(['cancelSlidelessSignIn', id])
+    },
+    pasteSlidelessKey: async (origin, key) => {
+      asked.push(['pasteSlidelessKey', origin, key])
+      return accounts
+    },
+    artefactDeck: async (sessionId, target) => {
+      asked.push(['artefactDeck', sessionId, target])
+      return deck
+    },
+    shareArtefact: async (sessionId, target, request) => {
+      asked.push(['shareArtefact', sessionId, target, request])
+      return { _tag: 'deck_gone', deck }
+    },
+    revokeArtefactLink: async (sessionId, target, tokenId) => {
+      asked.push(['revokeArtefactLink', sessionId, target, tokenId])
+      return deck
     },
     subscribe: (listener) => {
       listeners.add(listener)
@@ -174,7 +259,20 @@ describe('the artefacts over HTTP', () => {
       await post('/artefacts/save-version', { sessionId: 's1' }),
       await post('/artefacts/slideless/install', {}),
       await get('/artefacts'),
-      await get('/artefacts/slideless')
+      await get('/artefacts/slideless'),
+      // PRDCT-4266
+      await get('/artefacts/slideless/accounts'),
+      await post('/artefacts/slideless/accounts/check', {}),
+      await post('/artefacts/slideless/accounts/sites', { url: 'https://decks.example.test' }),
+      await post('/artefacts/slideless/accounts/new-links-site', { origin: null }),
+      await post('/artefacts/slideless/accounts/fix', { origin: 'o', kind: 'check' }),
+      await post('/artefacts/slideless/accounts/sign-in', { origin: 'o' }),
+      await post('/artefacts/slideless/accounts/sign-in/answer', { id: 'i1', code: '123456' }),
+      await post('/artefacts/slideless/accounts/sign-in/cancel', { id: 'i1' }),
+      await post('/artefacts/slideless/accounts/key', { origin: 'o', key: 'slk_x' }),
+      await get('/artefacts/deck?sessionId=s1&target=%2Fwork%2Fdeck'),
+      await post('/artefacts/deck/share', { sessionId: 's1', target: '/t', link: settings }),
+      await post('/artefacts/deck/revoke', { sessionId: 's1', target: '/t', tokenId: 't1' })
     ]
     for (const answer of answers) {
       expect(answer.status).toBe(422)
@@ -241,6 +339,114 @@ describe('the artefacts over HTTP', () => {
       ['close', 's1', '/work/talk'],
       ['close', 's1']
     ])
+  })
+
+  it('reaches each Slideless accounts and links method with its payload (PRDCT-4266)', async () => {
+    const { port, asked } = fakePort()
+    server = await startEmbedded({ ports: { sessions: new FakeSource(), artefacts: port } })
+    expect(await (await get('/artefacts/slideless/accounts')).json()).toEqual(accounts)
+    expect(await (await post('/artefacts/slideless/accounts/check', {})).json()).toMatchObject({
+      checked: true
+    })
+    const site = 'https://decks.example.test'
+    expect((await post('/artefacts/slideless/accounts/sites', { url: site })).status).toBe(200)
+    expect(
+      await (await post('/artefacts/slideless/accounts/new-links-site', { origin: site })).json()
+    ).toMatchObject({ newLinksSite: site })
+    await post('/artefacts/slideless/accounts/new-links-site', { origin: null })
+    await post('/artefacts/slideless/accounts/fix', { origin: site, kind: 'remove_profile' })
+    expect(
+      await (await post('/artefacts/slideless/accounts/sign-in', { origin: site })).json()
+    ).toMatchObject({ id: 'i1', phase: 'code_asked' })
+    await post('/artefacts/slideless/accounts/sign-in', {
+      origin: site,
+      email: 'someone@example.test',
+      hub: 'https://hub.example.test'
+    })
+    expect(
+      await (
+        await post('/artefacts/slideless/accounts/sign-in/answer', { id: 'i1', code: '123456' })
+      ).json()
+    ).toMatchObject({ phase: 'done' })
+    expect(
+      (await post('/artefacts/slideless/accounts/sign-in/cancel', { id: 'i1' })).status
+    ).toBeLessThan(300)
+    await post('/artefacts/slideless/accounts/key', { origin: site, key: 'slk_x' })
+    expect(await (await get('/artefacts/deck?sessionId=s1&target=%2Fwork%2Fdeck')).json()).toEqual(
+      deck
+    )
+    expect(
+      await (
+        await post('/artefacts/deck/share', {
+          sessionId: 's1',
+          target: '/work/deck',
+          link: settings
+        })
+      ).json()
+    ).toEqual({ _tag: 'deck_gone', deck })
+    const asking = {
+      site,
+      newDeck: true,
+      title: 'Deck',
+      link: { ...settings, name: 'For a client', password: 'four', pinVersion: true }
+    }
+    await post('/artefacts/deck/share', { sessionId: 's1', target: '/work/deck', ...asking })
+    expect(
+      await (
+        await post('/artefacts/deck/revoke', {
+          sessionId: 's1',
+          target: '/work/deck',
+          tokenId: 't1'
+        })
+      ).json()
+    ).toEqual(deck)
+    expect(asked).toEqual([
+      ['slidelessAccounts'],
+      ['checkSlidelessAccounts'],
+      ['addSlidelessSite', site],
+      ['setNewLinksSite', site],
+      ['setNewLinksSite', null],
+      ['runSlidelessFix', site, 'remove_profile'],
+      ['startSlidelessSignIn', site, {}],
+      [
+        'startSlidelessSignIn',
+        site,
+        { email: 'someone@example.test', hub: 'https://hub.example.test' }
+      ],
+      ['answerSlidelessSignIn', 'i1', '123456'],
+      ['cancelSlidelessSignIn', 'i1'],
+      ['pasteSlidelessKey', site, 'slk_x'],
+      ['artefactDeck', 's1', '/work/deck'],
+      ['shareArtefact', 's1', '/work/deck', { link: settings }],
+      ['shareArtefact', 's1', '/work/deck', asking],
+      ['revokeArtefactLink', 's1', '/work/deck', 't1']
+    ])
+  })
+
+  it('answers a Slideless refusal with its sentence, and a short secret without repeating it (PRDCT-4266)', async () => {
+    const { port, asked } = fakePort()
+    server = await startEmbedded({ ports: { sessions: new FakeSource(), artefacts: port } })
+    const refused = await post('/artefacts/slideless/accounts/sites', { url: 'nowhere' })
+    expect(refused.status).toBe(422)
+    expect(await refused.json()).toMatchObject({
+      _tag: 'ArtefactRefused',
+      message: 'Error: nowhere is not a site.'
+    })
+    asked.length = 0
+    for (const [path, body, secret] of [
+      [
+        '/artefacts/deck/share',
+        { sessionId: 's1', target: '/t', link: { ...settings, password: 'pw7' } },
+        'pw7'
+      ],
+      ['/artefacts/slideless/accounts/sign-in/answer', { id: 'i1', code: 'c'.repeat(65) }, 'ccc'],
+      ['/artefacts/slideless/accounts/key', { origin: 'o', key: 'k'.repeat(513) }, 'kkk']
+    ] as const) {
+      const answer = await post(path, body)
+      expect(answer.status).toBe(400)
+      expect(await answer.text()).not.toContain(secret)
+    }
+    expect(asked).toEqual([])
   })
 
   it('tells a push client each of its events', async () => {

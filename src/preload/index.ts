@@ -16,7 +16,16 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
+import type {
+  Artefact,
+  ArtefactDeck,
+  ArtefactShareRequest,
+  ArtefactShareResult,
+  ArtefactVersions,
+  SlidelessAccounts,
+  SlidelessSignIn,
+  SlidelessState
+} from '@clave/contract/artefacts/model'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -2071,7 +2080,68 @@ const electronAPI = {
     >('artefacts:slideless-state', 'slideless.state_changed', (event) => ({
       serverId: null,
       state: event.state
-    }))
+    })),
+    // ── PRDCT-4266: the Slideless accounts of a machine. This Mac's own copy
+    // here, as its state; a server's id is the fleet wrapper's to route. ──
+    slidelessAccounts: viaOwnServer<[string?], SlidelessAccounts>({
+      ipc: () => ipcRenderer.invoke('artefacts:slidelessAccounts'),
+      server: ({ api }) => api.artefacts.slidelessAccounts()
+    }),
+    checkSlidelessAccounts: viaOwnServer<[string?], SlidelessAccounts>({
+      ipc: () => ipcRenderer.invoke('artefacts:checkSlidelessAccounts'),
+      server: ({ api }) => api.artefacts.checkSlidelessAccounts()
+    }),
+    addSlidelessSite: viaOwnServer<[string, string?], SlidelessAccounts>({
+      ipc: (url) => ipcRenderer.invoke('artefacts:addSlidelessSite', url),
+      server: ({ api }, url) => api.artefacts.addSlidelessSite(url)
+    }),
+    setNewLinksSite: viaOwnServer<[string | null, string?], SlidelessAccounts>({
+      ipc: (origin) => ipcRenderer.invoke('artefacts:setNewLinksSite', origin),
+      server: ({ api }, origin) => api.artefacts.setNewLinksSite(origin)
+    }),
+    runSlidelessFix: viaOwnServer<[string, string, string?], SlidelessAccounts>({
+      ipc: (origin, kind) => ipcRenderer.invoke('artefacts:runSlidelessFix', origin, kind),
+      server: ({ api }, origin, kind) => api.artefacts.runSlidelessFix(origin, kind)
+    }),
+    startSlidelessSignIn: viaOwnServer<
+      [string, { email?: string; hub?: string }, string?],
+      SlidelessSignIn
+    >({
+      ipc: (origin, options) =>
+        ipcRenderer.invoke('artefacts:startSlidelessSignIn', origin, options),
+      server: ({ api }, origin, options) => api.artefacts.startSlidelessSignIn(origin, options)
+    }),
+    // The code and the key travel as arguments only: nothing here keeps or logs them.
+    answerSlidelessSignIn: viaOwnServer<[string, string, string?], SlidelessSignIn>({
+      ipc: (id, code) => ipcRenderer.invoke('artefacts:answerSlidelessSignIn', id, code),
+      server: ({ api }, id, code) => api.artefacts.answerSlidelessSignIn(id, code)
+    }),
+    cancelSlidelessSignIn: viaOwnServer<[string, string?], void>({
+      ipc: (id) => ipcRenderer.invoke('artefacts:cancelSlidelessSignIn', id),
+      server: ({ api }, id) => api.artefacts.cancelSlidelessSignIn(id)
+    }),
+    pasteSlidelessKey: viaOwnServer<[string, string, string?], SlidelessAccounts>({
+      ipc: (origin, key) => ipcRenderer.invoke('artefacts:pasteSlidelessKey', origin, key),
+      server: ({ api }, origin, key) => api.artefacts.pasteSlidelessKey(origin, key)
+    }),
+    // ── PRDCT-4266: an artefact's deck and its links, on the server the session
+    // runs on: this Mac's here, a connected server's routed by `createFleetDesktop`. ──
+    artefactDeck: viaOwnServer<[string, string], ArtefactDeck>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:artefactDeck', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.artefactDeck(sessionId, target)
+    }),
+    shareArtefact: viaOwnServer<[string, string, ArtefactShareRequest], ArtefactShareResult>({
+      ipc: (sessionId, target, request) =>
+        ipcRenderer.invoke('artefacts:shareArtefact', sessionId, target, request),
+      server: ({ api }, sessionId, target, request) =>
+        api.artefacts.shareArtefact(sessionId, target, request)
+    }),
+    revokeArtefactLink: viaOwnServer<[string, string, string], ArtefactDeck>({
+      ipc: (sessionId, target, tokenId) =>
+        ipcRenderer.invoke('artefacts:revokeArtefactLink', sessionId, target, tokenId),
+      server: ({ api }, sessionId, target, tokenId) =>
+        api.artefacts.revokeArtefactLink(sessionId, target, tokenId)
+    })
   },
   // PRDCT-4980: a session's deck alone in a window of its own
   // that main makes; this window holds the preview and hands main its address.

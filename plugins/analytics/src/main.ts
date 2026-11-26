@@ -9,6 +9,7 @@ import type { HostApi, PluginActionPreviewRow, PluginActionTarget } from './host
 import { settingsPort } from './ports'
 import { loadPrices, type PriceTable } from './prices'
 import { scopeView, startServer, type AnalyticsServer, type Scope } from './server'
+import { slidelessCommand } from './slideless-command'
 import { Store } from './store'
 import { VIEWER_NOTE, Viewer } from './viewer'
 
@@ -16,8 +17,9 @@ import { VIEWER_NOTE, Viewer } from './viewer'
  * Analytics: reads the transcripts of the Claude Code sessions Clave knows, keeps one
  * ledger row per session, serves its pages on loopback for the host's actions, keeps the
  * settings a person edits on its settings page, writes each opened page as a Slideless deck
- * folder on disk and runs the Slideless CLI's own viewer over those folders, so the page
- * Clave shows is the viewer's copy, reloaded as the data is rewritten; nothing leaves the Mac.
+ * folder on disk and runs the viewer of the server's own copy of Slideless over those
+ * folders, so the page Clave shows is the viewer's copy, reloaded as the data is rewritten;
+ * nothing leaves the Mac.
  */
 
 const LEDGER_WRITE_MS = 2_000
@@ -161,6 +163,8 @@ export default {
         const info = s.readServer()
         if (info) s.writeServer({ ...info, viewerPort: port })
       },
+      // The server's own copy, where the host says it is, read again at every start.
+      command: async () => slidelessCommand(process.env),
       log
     })
     viewer = v

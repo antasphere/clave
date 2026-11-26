@@ -17,6 +17,7 @@ import { OWN_PROFILE, TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
 import { getSessionHost } from '../sessions/host'
 import { electronRunner } from './electron-runner'
+import { pluginSlideless } from './plugin-host'
 import { createPluginService, refusingPluginService, type PluginService } from './plugin-service'
 
 let service: PluginService | null = null
@@ -35,6 +36,9 @@ export function shellPlugins(): PluginService {
       version: app.getVersion(),
       spawner: electronRunner(),
       records: () => getSessionHost().listAdoptableRecords(),
+      // The copy the in-process artefact service installs under user data, run
+      // by this process's own binary as Node (PRDCT-4499).
+      slideless: pluginSlideless(app.getPath('userData'), process.execPath),
       notify: ({ name, title, body }) => {
         if (!TEST_NO_ACTIVATE && Notification.isSupported())
           new Notification({ title: `${name}: ${title}`, body: body ?? '' }).show()

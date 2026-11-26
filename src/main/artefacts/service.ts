@@ -27,6 +27,13 @@
  * every link left is a known session's, so tabs closed for good never push
  * out the page of a tab that still runs.
  *
+ * The same copy of Slideless lists the machine's Slideless accounts and
+ * signs them in (PRDCT-4266, `slideless-accounts.ts`, `slideless-sign-in.ts`)
+ * and makes the links of an artefact (`artefact-share.ts`), each call one
+ * run of it (`slideless-run.ts`); the machine's « New links go to » and the
+ * decks of its artefacts are two more documents of the data folder
+ * (`slideless-settings.json`, `artefact-decks.json`).
+ *
  * Built by both entries, in-process by main and standalone by
  * `server-entry.ts`, over the entry's data folder. Imports no Electron,
  * directly or through anything it imports (`service-graph.test.ts`).
@@ -47,10 +54,24 @@ import type {
 import type { AgentState } from '@clave/contract/sessions'
 import type { ArtefactsService } from '@clave/server'
 import { finishesTurn } from '../../shared/turn-state'
-import type { ArtefactLinks } from './links'
+import { ArtefactDecks, DECKS_FILE, fileDecksStorage } from './artefact-decks'
+import { createArtefactShare } from './artefact-share'
+import { fileLinksStorage, type ArtefactLinks } from './links'
 import { PreviewServers } from './preview-servers'
 import { previewHostPath, writePreviewHost } from './preview-host'
-import { DEFAULT_REGISTRY, describeState, installSlideless, resolveCli } from './slideless-cli'
+import { ArtefactRefusal } from './refusal'
+import { createSlidelessAccounts } from './slideless-accounts'
+import {
+  DEFAULT_REGISTRY,
+  describeState,
+  installSlideless,
+  resolveCli,
+  supportsAccounts,
+  type ResolvedCli
+} from './slideless-cli'
+import { runSlideless, startSlideless, type SlidelessRunDeps } from './slideless-run'
+import { SETTINGS_FILE, SlidelessSettings } from './slideless-settings'
+import { createSlidelessSignIns } from './slideless-sign-in'
 
 /** How long a hold lives unless it is renewed. */
 export const HOLD_TTL_MS = 90_000
@@ -73,18 +94,8 @@ export const NO_PAGE = 'The folder holds no HTML page: write its index.html firs
 export const SEVERAL_PAGES =
   'The folder holds several HTML pages and no index.html: name one index.html'
 
-/**
- * The implementation's "no", answered as `ArtefactRefused` with its sentence.
- * Defined here, not imported from the server package: the handlers know it
- * by its name, and this module must not load the framework (the routines'
- * refusal does the same).
- */
-export class ArtefactRefusal extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ArtefactRefusal'
-  }
-}
+/** The implementation's "no" (`refusal.ts`), as this module has always exported it. */
+export { ArtefactRefusal }
 
 export interface ArtefactDeps {
   /** `slideless/cli`, `slideless/versions` and `slideless/preview-host.mjs` live under it. */
@@ -100,12 +111,17 @@ export interface ArtefactDeps {
     readonly knows: (sessionId: string) => boolean
     readonly onState: (listener: (sessionId: string, state: AgentState) => void) => () => void
   }
-  /** Install Slideless in the background when it is missing (off under test mode with no fixture registry). */
+  /** Install Slideless in the background when it is missing, and once a run when Clave's own copy
+   *  is older than the accounts' floor (off under test mode with no fixture registry). */
   readonly autoInstall: boolean
   readonly spawn?: (command: string, args: string[], options: SpawnOptions) => ChildProcess
   readonly fetch?: typeof globalThis.fetch
   readonly now?: () => number
   readonly log?: (message: string) => void
+  /** The machine's « New links go to » (PRDCT-4266): `slideless-settings.json` in the data folder when absent. */
+  readonly slidelessSettings?: SlidelessSettings
+  /** The decks of the artefacts and their links (PRDCT-4266): `artefact-decks.json` in the data folder when absent. */
+  readonly decks?: ArtefactDecks
 }
 
 export interface ArtefactServiceHandle extends ArtefactsService {
@@ -194,11 +210,16 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   // ── Slideless, this server's own copy ──
   let installing: Promise<SlidelessState> | null = null
   let lastError: string | null = null
+  /** This run already installed the registry's latest, by itself or asked:
+   *  the update below the accounts' floor is not tried again, so a registry
+   *  still behind never loops. */
+  let latestTried = false
   const state = (): SlidelessState =>
     describeState(resolveCli(cliDir, deps.env), installing !== null, lastError)
 
   const install = (): Promise<SlidelessState> => {
     if (installing) return installing
+    latestTried = true
     lastError = null
     installing = installSlideless(cliDir, {
       fetch: fetchImpl,
@@ -220,8 +241,28 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
     tell({ _tag: 'slideless.state_changed', state: state() })
     return installing
   }
-  const installWhenMissing = (): void => {
-    if (deps.autoInstall && state().phase === 'missing') void install()
+  /** Installs Slideless in the background when it is missing; and, once a
+   *  run, when Clave's own copy (never the override) is older than the
+   *  release the accounts and the links need (PRDCT-4266): the registry's
+   *  latest, installed as « Install latest » does, its integrity checked,
+   *  unless this run installed the latest already. The previews running on
+   *  the old copy keep running meanwhile. */
+  const installWhenNeeded = (): void => {
+    if (!deps.autoInstall) return
+    const now = state()
+    if (now.phase === 'missing') {
+      void install()
+      return
+    }
+    if (
+      now.phase !== 'ready' ||
+      now.override === true ||
+      now.version === null ||
+      supportsAccounts(now.version) ||
+      latestTried
+    )
+      return
+    void install()
   }
 
   // ── The previews and their holds ──
@@ -427,12 +468,51 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
   const artefactsOf = (sessionId: string): Artefact[] =>
     deps.links.list(sessionId).map((link) => ({ sessionId, ...link }))
 
-  const readyCli = (): string => {
+  /** This server's own copy when it is ready, else the refusal with the sentence why not. */
+  const readyResolved = (): ResolvedCli => {
     const resolved = resolveCli(cliDir, deps.env)
     const why = notReady(describeState(resolved, installing !== null, lastError))
     if (why !== null || !resolved.cli) throw new ArtefactRefusal(why ?? NOT_AN_ARTEFACT)
-    return resolved.cli.cliPath
+    return resolved.cli
   }
+  const readyCli = (): string => readyResolved().cliPath
+
+  // ── PRDCT-4266: the Slideless accounts of the machine, and the links of an artefact ──
+  // Each call is one run of the same copy, under the same Node and environment.
+  const command: SlidelessRunDeps = {
+    execPath: deps.execPath,
+    env: deps.env,
+    spawn,
+    cli: readyResolved
+  }
+  const run = (
+    args: readonly string[],
+    options: Parameters<typeof runSlideless>[2]
+  ): ReturnType<typeof runSlideless> => runSlideless(command, args, options)
+  const accounts = createSlidelessAccounts({
+    cli: readyResolved,
+    run,
+    settings:
+      deps.slidelessSettings ??
+      new SlidelessSettings(fileLinksStorage(join(deps.dataDir, SETTINGS_FILE)), log)
+  })
+  const signIns = createSlidelessSignIns({
+    listed: accounts.listed,
+    start: (args) => startSlideless(command, args)
+  })
+  const sharing = createArtefactShare({
+    dataDir: deps.dataDir,
+    decks: deps.decks ?? new ArtefactDecks(fileDecksStorage(join(deps.dataDir, DECKS_FILE))),
+    artefact: (sessionId, target) => {
+      const link = linkOf(sessionId, target)
+      if (!link) throw new ArtefactRefusal(NO_ARTEFACT_OPEN)
+      return link
+    },
+    cli: readyResolved,
+    run,
+    listed: accounts.listed,
+    now
+  })
 
   const saveVersion = async (sessionId: string, target?: string): Promise<ArtefactVersion> => {
     const link = linkOf(sessionId, target)
@@ -500,7 +580,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       tell({ _tag: 'artefact.changed', sessionId, artefact, artefacts: artefactsOf(sessionId) })
       // After the change, so the window that presents it already lists it.
       if (present === true) tell({ _tag: 'artefact.present_requested', sessionId })
-      installWhenMissing()
+      installWhenNeeded()
       return artefact
     },
     close: async (sessionId, target) => {
@@ -547,6 +627,18 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       ),
     slidelessState: async () => state(),
     installSlideless: () => install(),
+    slidelessAccounts: () => accounts.list({ check: false }),
+    checkSlidelessAccounts: () => accounts.list({ check: true }),
+    addSlidelessSite: (url) => accounts.addSite(url),
+    setNewLinksSite: (origin) => accounts.setNewLinksSite(origin),
+    runSlidelessFix: (origin, kind) => accounts.runFix(origin, kind),
+    startSlidelessSignIn: (origin, options) => signIns.start(origin, options),
+    answerSlidelessSignIn: (id, code) => signIns.answer(id, code),
+    cancelSlidelessSignIn: async (id) => signIns.cancel(id),
+    pasteSlidelessKey: (origin, key) => accounts.pasteKey(origin, key),
+    artefactDeck: (sessionId, target) => sharing.deck(sessionId, target),
+    shareArtefact: (sessionId, target, request) => sharing.share({ ...request, sessionId, target }),
+    revokeArtefactLink: (sessionId, target, tokenId) => sharing.revoke(sessionId, target, tokenId),
     subscribe: (listener) => {
       listeners.add(listener)
       return () => {
@@ -562,7 +654,7 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
         sweeper = setInterval(sweep, SWEEP_MS)
         sweeper.unref?.()
       }
-      installWhenMissing()
+      installWhenNeeded()
     },
     stop: async () => {
       stopStates?.()
@@ -573,6 +665,8 @@ export function createArtefactService(deps: ArtefactDeps): ArtefactServiceHandle
       idleSince.clear()
       for (const target of [...previews.keys()]) forgetPreview(target)
       servers.stopAll()
+      // A sign-in waiting on its code ends with the server.
+      signIns.stop()
     }
   }
 }

@@ -11,8 +11,12 @@ import {
   installedVersion,
   installSlideless,
   integrityMatches,
+  MIN_ACCOUNTS_VERSION,
+  MIN_SLIDELESS_VERSION,
   readTar,
-  resolveCli
+  resolveCli,
+  supportsAccounts,
+  tooOldFor
 } from './slideless-cli'
 
 const dirs: string[] = []
@@ -188,6 +192,23 @@ describe('the managed Slideless CLI', () => {
       override: true
     })
     expect(resolveCli(dir, { [CLI_OVERRIDE_ENV]: join(dir, 'nope.js') }).cli).toBeNull()
+  })
+
+  it('runs the accounts and the links from 0.15.0, and on the override, whatever it is (PRDCT-4266)', () => {
+    expect(MIN_ACCOUNTS_VERSION).toBe('0.15.0')
+    expect(supportsAccounts('0.15.0')).toBe(true)
+    expect(supportsAccounts('0.16.2')).toBe(true)
+    expect(supportsAccounts('0.14.9')).toBe(false)
+    expect(supportsAccounts('0.15.0-beta.1')).toBe(false)
+    expect(supportsAccounts('override')).toBe(true)
+    // The previews keep their own floor.
+    expect(MIN_SLIDELESS_VERSION).toBe('0.14.0')
+    expect(tooOldFor('links', '0.14.1')).toBe(
+      "Clave's Slideless is 0.14.1; links need 0.15.0 or later: Settings › Software Update installs it."
+    )
+    expect(tooOldFor('accounts', '0.14.1')).toBe(
+      "Clave's Slideless is 0.14.1; accounts need 0.15.0 or later: Settings › Software Update installs it."
+    )
   })
 
   it('refuses an installed copy older than the minimum, and a pointer with a strange version', () => {

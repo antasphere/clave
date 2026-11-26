@@ -65,7 +65,16 @@ import type {
 import type { DownloadProgress, ReleaseNote, UpdaterState } from '../shared/updater-types'
 import type { LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
+import type {
+  Artefact,
+  ArtefactDeck,
+  ArtefactShareRequest,
+  ArtefactShareResult,
+  ArtefactVersions,
+  SlidelessAccounts,
+  SlidelessSignIn,
+  SlidelessState
+} from '@clave/contract/artefacts/model'
 import type { GitRangeDirection } from '../shared/git-range'
 import type {
   HelperAccount,
@@ -910,6 +919,40 @@ export interface ArtefactsAPI {
   onSlidelessState(
     callback: (change: { serverId: string | null; state: SlidelessState }) => void
   ): () => void
+  /** The Slideless accounts of a machine (PRDCT-4266): this Mac when serverId is absent, else a
+   *  connected server. When they cannot be listed, `error` says why (and `needsUpdate` when an
+   *  update of Clave's Slideless is the cure). */
+  slidelessAccounts(serverId?: string): Promise<SlidelessAccounts>
+  /** The accounts with each sign-in tried on its site. */
+  checkSlidelessAccounts(serverId?: string): Promise<SlidelessAccounts>
+  addSlidelessSite(url: string, serverId?: string): Promise<SlidelessAccounts>
+  /** The machine's « New links go to »: one of its sites (an origin), or none. */
+  setNewLinksSite(origin: string | null, serverId?: string): Promise<SlidelessAccounts>
+  /** Run the fix a site's profile offers when it asks nothing (`check`, `remove_profile`). */
+  runSlidelessFix(origin: string, kind: string, serverId?: string): Promise<SlidelessAccounts>
+  /** Start a site's e-mail code sign-in: answered when the code is asked (`code_asked`), or at
+   *  its end. `hub` answers a `pick_hub` fix, `email` a `pick_login` one (and any other's address). */
+  startSlidelessSignIn(
+    origin: string,
+    options: { email?: string; hub?: string },
+    serverId?: string
+  ): Promise<SlidelessSignIn>
+  /** Give a sign-in its code: answered at its end (`done` or `failed`). */
+  answerSlidelessSignIn(id: string, code: string, serverId?: string): Promise<SlidelessSignIn>
+  cancelSlidelessSignIn(id: string, serverId?: string): Promise<void>
+  /** Sign a site in with a key, given to the command on its input. */
+  pasteSlidelessKey(origin: string, key: string, serverId?: string): Promise<SlidelessAccounts>
+  /** The deck and the links Clave made of one of a session's artefacts (PRDCT-4266). */
+  artefactDeck(sessionId: string, target: string): Promise<ArtefactDeck>
+  /** Push the artefact to its deck and make a link with the settings asked: `deck_gone` when
+   *  the deck Clave knew is no longer on its site (then `newDeck` is the person's call). */
+  shareArtefact(
+    sessionId: string,
+    target: string,
+    request: ArtefactShareRequest
+  ): Promise<ArtefactShareResult>
+  /** Revoke one of the links Clave made to the artefact's deck. */
+  revokeArtefactLink(sessionId: string, target: string, tokenId: string): Promise<ArtefactDeck>
 }
 
 /** A session's deck alone in a window of its own (PRDCT-4980). */
