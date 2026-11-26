@@ -196,6 +196,9 @@ export function createSlidelessSignIns(deps: SignInDeps): SlidelessSignIns {
         if (!isWebAddress(hub)) throw new ArtefactRefusal(HUB_ADDRESS)
         if (fix.argv.at(-1) !== '--hub') throw new ArtefactRefusal(NO_CODE_SIGN_IN)
         args.push(normalOrigin(hub))
+        // A hub with no login of this machine asks for the address first: given here, it is
+        // never asked (a question the window cannot answer stops the sign-in).
+        if (email) args.push('--email', email)
       } else if (fix.kind === 'pick_login') {
         if (!email) throw new ArtefactRefusal(ADDRESS_FIRST)
         if (fix.argv.at(-1) !== '--email') throw new ArtefactRefusal(NO_CODE_SIGN_IN)

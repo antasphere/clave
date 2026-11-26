@@ -244,6 +244,15 @@ describe('starting a sign-in', () => {
       '--hub',
       'https://other.example.test'
     ])
+    // With the address the form gives: the command never has to ask for it.
+    void s.signIns.start(CLOUD, { hub: HUB, email: 'someone@example.test' })
+    await flush()
+    expect(s.started()[2]!.args.slice(-4)).toEqual([
+      '--hub',
+      HUB,
+      '--email',
+      'someone@example.test'
+    ])
     s.signIns.stop()
   })
 
