@@ -9,16 +9,28 @@ import { Effect } from 'effect'
 import { CommandHandler, QueryHandler } from '@structure-ai/cqrs'
 import { CapabilityUnavailable } from '@clave/contract/errors'
 import {
+  AddSlidelessSite,
+  AnswerSlidelessSignIn,
   ArtefactRefused,
+  CancelSlidelessSignIn,
+  CheckSlidelessAccounts,
   CloseArtefact,
+  GetArtefactDeck,
   GetSlidelessState,
   HoldArtefactPreview,
   InstallSlideless,
   ListArtefacts,
   ListArtefactVersions,
+  ListSlidelessAccounts,
   OpenArtefact,
+  PasteSlidelessKey,
   ReleaseArtefactPreview,
-  SaveArtefactVersion
+  RevokeArtefactLink,
+  RunSlidelessFix,
+  SaveArtefactVersion,
+  SetNewLinksSite,
+  ShareArtefact,
+  StartSlidelessSignIn
 } from '@clave/contract/artefacts'
 import { ArtefactsPort, ArtefactRefusal, type ArtefactsService } from './port'
 
@@ -86,5 +98,40 @@ export const artefactHandlers = [
       p.target === undefined ? a.versions(p.sessionId) : a.versions(p.sessionId, p.target)
     )
   ),
-  CommandHandler.make(InstallSlideless, () => plain((a) => a.installSlideless()))
+  CommandHandler.make(InstallSlideless, () => plain((a) => a.installSlideless())),
+  // ── PRDCT-4266: the Slideless accounts of the server's machine ──
+  QueryHandler.make(ListSlidelessAccounts, () => call((a) => a.slidelessAccounts())),
+  CommandHandler.make(CheckSlidelessAccounts, () => call((a) => a.checkSlidelessAccounts())),
+  CommandHandler.make(AddSlidelessSite, (p) => call((a) => a.addSlidelessSite(p.url))),
+  CommandHandler.make(SetNewLinksSite, (p) => call((a) => a.setNewLinksSite(p.origin))),
+  CommandHandler.make(RunSlidelessFix, (p) => call((a) => a.runSlidelessFix(p.origin, p.kind))),
+  // The address and the hub are passed on only when they are given.
+  CommandHandler.make(StartSlidelessSignIn, (p) =>
+    call((a) =>
+      a.startSlidelessSignIn(p.origin, {
+        ...(p.email !== undefined && { email: p.email }),
+        ...(p.hub !== undefined && { hub: p.hub })
+      })
+    )
+  ),
+  CommandHandler.make(AnswerSlidelessSignIn, (p) =>
+    call((a) => a.answerSlidelessSignIn(p.id, p.code))
+  ),
+  CommandHandler.make(CancelSlidelessSignIn, (p) => plain((a) => a.cancelSlidelessSignIn(p.id))),
+  CommandHandler.make(PasteSlidelessKey, (p) => call((a) => a.pasteSlidelessKey(p.origin, p.key))),
+  // ── PRDCT-4266: an artefact's deck and its links ──
+  QueryHandler.make(GetArtefactDeck, (p) => call((a) => a.artefactDeck(p.sessionId, p.target))),
+  CommandHandler.make(ShareArtefact, (p) =>
+    call((a) =>
+      a.shareArtefact(p.sessionId, p.target, {
+        ...(p.site !== undefined && { site: p.site }),
+        ...(p.newDeck !== undefined && { newDeck: p.newDeck }),
+        ...(p.title !== undefined && { title: p.title }),
+        link: p.link
+      })
+    )
+  ),
+  CommandHandler.make(RevokeArtefactLink, (p) =>
+    call((a) => a.revokeArtefactLink(p.sessionId, p.target, p.tokenId))
+  )
 ] as const

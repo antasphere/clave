@@ -263,6 +263,8 @@ function sessionFromRecord(
     openedBy: s.openedBy,
     // Which wave or lane it works on, as its record keeps it (PRDCT-4123).
     work: s.work,
+    // Which projects it works on, as Jev last read it (PRDCT-5179).
+    projects: s.projects,
     // The writing style its agent was given (PRDCT-5166): the spawn's word
     // when this adoption spawned it, else the record's.
     writingStyle: info ? info.writingStyle : s.writingStyle,
@@ -540,6 +542,7 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     spawnedBy: s.spawnedBy,
     openedBy: s.openedBy,
     work: s.work,
+    projects: s.projects,
     // The writing style its agent was given (PRDCT-5166).
     writingStyle: s.writingStyle,
     detectedUrl: null,

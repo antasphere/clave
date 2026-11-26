@@ -34,6 +34,7 @@ import { nestAnswerError, nestRefusalMessage } from '../shared/nest-tools'
 import type { HelperPreference } from '../shared/helper-preferences'
 import type { WritingStylesView } from '../shared/writing-styles'
 import type { ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { DecisionPreference } from '../shared/decision-preferences'
 import type { SpeakResult } from '../shared/speech'
 import type { ElectronAPI, SessionRecord, SessionInfo } from './index.d'
 import type {
@@ -1171,6 +1172,17 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       const { api } = await backing(serverId)
       return [...(await api.settings.helpers.set(helperId, patch))] as HelperPreference[]
     },
+    // The decisions' switches too (PRDCT-5179): on the machine that asks Jev.
+    fleetDecisions: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.decisionsList()
+      const { api } = await backing(serverId)
+      return [...(await api.settings.decisions.list())] as DecisionPreference[]
+    },
+    fleetDecisionSet: async (serverId, decisionId, patch) => {
+      if (serverId === LOCAL_SERVER_ID) return local.decisionSet(decisionId, patch)
+      const { api } = await backing(serverId)
+      return [...(await api.settings.decisions.set(decisionId, patch))] as DecisionPreference[]
+    },
     // The writing styles too (PRDCT-5166): a server's are the ones its tabs
     // start with, kept there; this Mac's go over its own route.
     fleetWritingStyles: async (serverId) => {
@@ -1239,6 +1251,22 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
       if (serverId === LOCAL_SERVER_ID) return local.elevenLabsPreview(voiceId)
       const { api } = await backing(serverId)
       return (await api.speech.preview({ voiceId })) as SpeakResult
+    },
+    // The Jev key (PRDCT-5179): sealed on the server beside its ElevenLabs key.
+    fleetJevSetKey: async (serverId, apiKey) => {
+      if (serverId === LOCAL_SERVER_ID) return local.jevSetKey(apiKey)
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.setJevKey(apiKey)) as IntegrationsStatus
+    },
+    fleetJevCheck: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.jevCheck()
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.checkJev()) as IntegrationsStatus
+    },
+    fleetJevRemove: async (serverId) => {
+      if (serverId === LOCAL_SERVER_ID) return local.jevRemove()
+      const { api } = await backing(serverId)
+      return (await api.settings.integrations.removeJevKey()) as IntegrationsStatus
     },
     fleetSaveLayout: async (serverId, layout, baseRevision) => {
       const b = await backing(serverId)
@@ -1469,6 +1497,8 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   type PageTitleAnswer = Awaited<ReturnType<ElectronAPI['pageTitle']>>
   // ── PRDCT-4411: the speech's answer ──
   type SpeakAnswer = Awaited<ReturnType<ElectronAPI['speakText']>>
+  // ── PRDCT-5179: the decisions' answer ──
+  type TabProjectsAnswer = Awaited<ReturnType<ElectronAPI['readTabProjects']>>
   type PageTitlesFiled = Awaited<ReturnType<ElectronAPI['pageTitlesOf']>>
   // ── PRDCT-4474: a session's artefact, on the server the session runs on ──
   // A server's preview is on THAT server's loopback: the window frames it
@@ -1487,6 +1517,16 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
   const releaseForward = (forward: ForwardOpened): void => {
     void ports.invoke('forwards:release', forward.key).catch(noop)
   }
+  /** A call about a machine's own Slideless (PRDCT-4474, PRDCT-4266): this Mac's
+   *  without a server id, else the server named, which is handed the arguments only. */
+  const onMachine = async <R>(
+    serverId: string | undefined,
+    mine: () => Promise<R>,
+    theirs: (api: Backing['api']) => Promise<R>
+  ): Promise<R> =>
+    serverId === undefined || serverId === LOCAL_SERVER_ID
+      ? mine()
+      : theirs((await backing(serverId)).api)
   const artefacts: ArtefactsAPI = {
     ...local.artefacts,
     list: async () => {
@@ -1631,6 +1671,80 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         eventListener('slideless.state_changed', (event, owner) =>
           cb({ serverId: owner, state: event.state })
         )
+      ),
+    // ── PRDCT-4266: the Slideless accounts of a machine ──
+    slidelessAccounts: (serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.slidelessAccounts(),
+        (api) => api.artefacts.slidelessAccounts()
+      ),
+    checkSlidelessAccounts: (serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.checkSlidelessAccounts(),
+        (api) => api.artefacts.checkSlidelessAccounts()
+      ),
+    addSlidelessSite: (url, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.addSlidelessSite(url),
+        (api) => api.artefacts.addSlidelessSite(url)
+      ),
+    setNewLinksSite: (origin, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.setNewLinksSite(origin),
+        (api) => api.artefacts.setNewLinksSite(origin)
+      ),
+    runSlidelessFix: (origin, kind, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.runSlidelessFix(origin, kind),
+        (api) => api.artefacts.runSlidelessFix(origin, kind)
+      ),
+    startSlidelessSignIn: (origin, options, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.startSlidelessSignIn(origin, options),
+        (api) => api.artefacts.startSlidelessSignIn(origin, options)
+      ),
+    answerSlidelessSignIn: (id, code, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.answerSlidelessSignIn(id, code),
+        (api) => api.artefacts.answerSlidelessSignIn(id, code)
+      ),
+    cancelSlidelessSignIn: (id, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.cancelSlidelessSignIn(id),
+        (api) => api.artefacts.cancelSlidelessSignIn(id)
+      ),
+    pasteSlidelessKey: (origin, key, serverId) =>
+      onMachine(
+        serverId,
+        () => local.artefacts.pasteSlidelessKey(origin, key),
+        (api) => api.artefacts.pasteSlidelessKey(origin, key)
+      ),
+    // ── PRDCT-4266: an artefact's deck and its links, on the server the session runs on ──
+    artefactDeck: (id, target) =>
+      route(
+        id,
+        (wireId) => local.artefacts.artefactDeck(wireId, target),
+        (b, wireId) => b.api.artefacts.artefactDeck(wireId, target)
+      ),
+    shareArtefact: (id, target, request) =>
+      route(
+        id,
+        (wireId) => local.artefacts.shareArtefact(wireId, target, request),
+        (b, wireId) => b.api.artefacts.shareArtefact(wireId, target, request)
+      ),
+    revokeArtefactLink: (id, target, tokenId) =>
+      route(
+        id,
+        (wireId) => local.artefacts.revokeArtefactLink(wireId, target, tokenId),
+        (b, wireId) => b.api.artefacts.revokeArtefactLink(wireId, target, tokenId)
       )
   }
   const api: ElectronAPI = {
@@ -1755,6 +1869,25 @@ export function createFleetDesktop(local: ElectronAPI, ports: FleetPorts): Elect
         async (b, wireId) =>
           (await b.api.speech.speak({ sessionId: wireId, text: request.text })) as SpeakAnswer
       ),
+    // Which projects tabs work on (PRDCT-5179): read by the server that owns
+    // them, with its key. One call, one owner: the first id's; a list that
+    // mixes machines is refused in words, never split behind the caller.
+    readTabProjects: async (sessionIds) => {
+      if (sessionIds.length === 0) return { tabs: [] }
+      const refs = sessionIds.map(parseSessionKey)
+      const owner = refs[0].serverId
+      if (refs.some((ref) => ref.serverId !== owner))
+        throw new Error('These tabs run on different machines: read each machine’s tabs apart.')
+      if (owner === LOCAL_SERVER_ID) return local.readTabProjects(sessionIds)
+      const b = await backing(owner)
+      const { tabs } = await b.api.decisions.readTabProjects(refs.map((ref) => ref.sessionId))
+      return {
+        tabs: tabs.map((tab) => ({
+          ...(tab as TabProjectsAnswer['tabs'][number]),
+          sessionId: key(owner, tab.sessionId)
+        }))
+      }
+    },
     pageTitle: (request) =>
       route(
         request.sessionId,

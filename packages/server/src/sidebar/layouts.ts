@@ -219,12 +219,23 @@ export class SidebarLayouts {
     return { group: stored, layout }
   }
 
+  /**
+   * Every `RenameGroup` is a rename by someone other than Clave's own naming
+   * (an agent's `clave_rename`, a client of the API): Clave names a person's
+   * group in the window's store, never through this command. So the name
+   * becomes its author's and the group leaves Clave's naming: `autoNamed`
+   * goes, in every server mode (PRDCT-5179).
+   */
   renameGroup(
     windowKey: string,
     groupId: string,
     name: string
   ): Result<LayoutSnapshot, GroupNotFound> {
-    return this.editGroup(windowKey, groupId, (g) => ({ ...g, name: name.trim() || 'Group' }))
+    return this.editGroup(windowKey, groupId, (g) => {
+      const { autoNamed: _named, ...rest } = g
+      void _named
+      return { ...rest, name: name.trim() || 'Group' }
+    })
   }
 
   setGroupView(

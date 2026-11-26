@@ -1,19 +1,21 @@
 // The pages of the bundled Analytics plugin as Slideless decks on this Mac: each opened page
-// written as a deck folder under the plugin's data folder and served by the Slideless CLI's
-// own local viewer (`slideless dev`), the page Clave shows being the viewer's copy. Nothing
-// here reaches Slideless or needs the real CLI: the `slideless` first on the PATH is a stub
-// whose `dev` subcommand is a small static server in node with the real viewer's shape (the
-// sandbox header, a reload snippet, a watch on the root), recording the arguments it got. The
-// checks are on the arguments (an argument list, never a shell string), on the deck folder and
-// its three files, on the page pane showing the viewer's URL with the deck's title and its
-// footer line, on a settings change reaching the deck on disk and the page in place, on a
-// range chip leading through the plugin's open route under the sandbox, and on the fallback:
-// the plugin switched off and on again with a stub whose `dev` refuses, the pane shows the
-// page Clave serves itself with the one line saying why. The plugin runs in its own process
-// with the path the host hands it, so the stub reaches it the way a dev app's or a packaged
-// app's CLI does. A CLI absent from the path altogether cannot be staged here: the plugin
-// reads the login shell's path too, and this Mac's may carry the real one; `viewer.test.ts`
-// pins that case with a fake spawn.
+// written as a deck folder under the plugin's data folder and served by the viewer of the
+// server's OWN copy of Slideless (`slideless dev`, PRDCT-4499), the page Clave shows being the
+// viewer's copy. Nothing here reaches Slideless or needs the real command line, and nothing
+// is looked for on a path: the copy is a stub the app is told through `CLAVE_SLIDELESS_CLI`,
+// a CommonJS file the preview host imports (`<node> <host> <stub> dev …`), whose `dev` is a
+// small static server with the real viewer's shape (the sandbox header, a reload snippet, a
+// watch on the root), recording the arguments it got after the host and its own path, and
+// that it runs under the host. The host (the server's plugin host) tells the plugin's
+// process where the copy is, the override with it, and the plugin builds the command from
+// that, so the stub runs the way Clave's installed copy does. The checks are on the
+// arguments (an argument list, never a shell string), on the deck folder and its three
+// files, on the page pane showing the viewer's URL with the deck's title and its footer
+// line, on a settings change reaching the deck on disk and the page in place, on a range
+// chip leading through the plugin's open route under the sandbox, and on the fallback: the
+// plugin switched off and on again with a stub whose `dev` refuses, the pane shows the page
+// Clave serves itself with the one line saying why. No copy at all (no override, nothing
+// installed) is pinned by `viewer.test.ts` and `slideless-command.test.ts`.
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -22,6 +24,8 @@ import { openChat } from './chat-view.spec.mjs'
 import { PAGE, PLUGIN, inGuest, menuItem, menuItems, rowButton } from './analytics-actions.spec.mjs'
 
 const BIN = fixturePath('analytics-viewer-bin')
+/** The copy the app is told to run instead of its own (`CLAVE_SLIDELESS_CLI`). */
+const STUB = `${BIN}/slideless-stub.cjs`
 const CALLS = `${BIN}/slideless-calls.jsonl`
 const REFUSE = `${BIN}/slideless-refuse`
 const VIEWER_NOTE = 'Served by the Slideless viewer on this Mac'
@@ -32,13 +36,16 @@ function writeStub() {
   rmSync(BIN, { recursive: true, force: true })
   mkdirSync(BIN, { recursive: true })
   writeFileSync(
-    `${BIN}/slideless`,
-    `#!${process.execPath}
+    STUB,
+    `// Imported by the preview host, which took itself out of the arguments first: the
+// command line reads them as if it had been run directly, its own path in argv[1].
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(CALLS)}, JSON.stringify({ args }) + '\\n');
+// Under the host: its watch on the input, which ends this process when its parent's end closes.
+const hosted = process.stdin.listenerCount('end') > 0;
+fs.appendFileSync(${JSON.stringify(CALLS)}, JSON.stringify({ cli: process.argv[1], args, hosted }) + '\\n');
 if (args[0] !== 'dev') { process.stderr.write('unknown command\\n'); process.exit(2); }
 if (fs.existsSync(${JSON.stringify(REFUSE)})) {
   process.stderr.write('dev refused by the stub\\n');
@@ -96,19 +103,22 @@ server.listen(port, '127.0.0.1', () => {
 const stop = () => { server.close(); process.exit(0); };
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
-`,
-    { mode: 0o755 }
+`
   )
 }
 
-const calls = () =>
+/** Every start of the stub: its own path as the host left it, its arguments after it, and
+ *  whether it ran under the host. */
+const runs = () =>
   existsSync(CALLS)
     ? readFileSync(CALLS, 'utf8')
         .trim()
         .split('\n')
         .filter(Boolean)
-        .map((line) => JSON.parse(line).args)
+        .map((line) => JSON.parse(line))
     : []
+/** The arguments of every start, after the host and the stub's path. */
+const calls = () => runs().map((run) => run.args)
 
 /** The guest's own URL, once it answers. */
 const guestUrl = (win) => until(() => inGuest(win, 'location.href'))
@@ -122,9 +132,8 @@ const footText = (win, part) =>
 
 export async function run(t) {
   writeStub()
-  const chat = await openChat('analytics-viewer', [], undefined, {
-    PATH: `${BIN}:${process.env.PATH}`
-  })
+  // The copy to run instead of the server's own, named to the app, never put on a path.
+  const chat = await openChat('analytics-viewer', [], undefined, { CLAVE_SLIDELESS_CLI: STUB })
   const { win, record } = chat
   try {
     const plugin = await until(async () => {
@@ -135,10 +144,16 @@ export async function run(t) {
     })
     assert.ok(plugin, 'the plugin runs')
 
-    // 1. The viewer: the CLI's dev server over the plugin's decks root, as an argument list,
-    // any port the first time.
-    const dev = await until(() => calls().find((args) => args[0] === 'dev') ?? null)
-    assert.ok(dev, JSON.stringify(calls()))
+    // 1. The viewer: the copy named to the app, run under the preview host, its dev server
+    // over the plugin's decks root, as an argument list, any port the first time.
+    const started = await until(() => runs().find((run) => run.args[0] === 'dev') ?? null)
+    assert.ok(started, JSON.stringify(runs()))
+    t.check(
+      'the plugin runs the copy the app was told, under the preview host, not a slideless on a path',
+      started.cli === STUB && started.hosted === true,
+      JSON.stringify({ cli: started.cli, hosted: started.hosted })
+    )
+    const dev = started.args
     const root = dev[1]
     const dataDir = path.resolve(root, '..')
     t.check(

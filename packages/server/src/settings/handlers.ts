@@ -5,8 +5,8 @@
  * the source's own `CapabilityUnavailable` is the one failure that reaches
  * the wire as declared (422). Anything else the source throws is a defect.
  *
- * The four secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`,
- * `SetElevenLabsKey`, `SetProviderConnectionKey`) arrive
+ * The five secrets (`SetClaudeAccountToken`, `StartCodexApiKeyLogin`,
+ * `SetElevenLabsKey`, `SetJevKey`, `SetProviderConnectionKey`) arrive
  * redacted; they are opened here, handed to the source, and appear in no
  * answer: the success schemas carry none, and the contract's own test keeps
  * it so.
@@ -25,12 +25,14 @@ import {
   SignOutOfAntasphere,
   CapabilityUnavailable,
   CheckElevenLabs,
+  CheckJev,
   ClearClaudeAccountToken,
   ClearCodexAccountCredential,
   DeleteLaunchProfile,
   ListAccountLogins,
   ListElevenLabsVoices,
   ListHelperPreferences,
+  ListDecisions,
   ListClaudeAccounts,
   ListCodexAccounts,
   ListLaunchProfiles,
@@ -46,6 +48,7 @@ import {
   RemoveClaudeAccount,
   RemoveCodexAccount,
   RemoveElevenLabsKey,
+  RemoveJevKey,
   RenameClaudeAccount,
   RenameCodexAccount,
   ReorderClaudeAccounts,
@@ -55,8 +58,10 @@ import {
   SetClaudeAccountToken,
   SetElevenLabsKey,
   SetElevenLabsVoice,
+  SetJevKey,
   SetGlobalLaunchProfile,
   SetHelperPreference,
+  SetDecisionPreference,
   SetLastActiveWorkspace,
   SetWorkspaceLaunchProfile,
   SettingsRefused,
@@ -222,6 +227,17 @@ export const settingsHandlers = [
       })
     }))
   ),
+  // The decisions (PRDCT-5179): the host's switches, whole list each way.
+  QueryHandler.make(ListDecisions, () =>
+    ask(async (s) => ({ decisions: await s.decisions.list() }))
+  ),
+  CommandHandler.make(SetDecisionPreference, (p) =>
+    must(async (s) => ({
+      decisions: await s.decisions.set(p.id, {
+        ...(p.enabled !== undefined && { enabled: p.enabled })
+      })
+    }))
+  ),
   // The writing styles (PRDCT-5166): the host's store, the whole view each
   // way; the store's refusal is the person's sentence.
   QueryHandler.make(ListWritingStyles, () => ask((s) => s.writingStyles.list())),
@@ -252,6 +268,12 @@ export const settingsHandlers = [
     call((s) => s.integrations.setElevenLabsVoice(p.voiceId, p.voiceName, p.modelId))
   ),
   QueryHandler.make(ListElevenLabsVoices, () => call((s) => s.integrations.listElevenLabsVoices())),
+  // The Jev key (PRDCT-5179): the same road, sealed beside the ElevenLabs one.
+  CommandHandler.make(SetJevKey, (p) =>
+    call((s) => s.integrations.setJevKey(Redacted.value(p.apiKey)))
+  ),
+  CommandHandler.make(CheckJev, () => call((s) => s.integrations.checkJev())),
+  CommandHandler.make(RemoveJevKey, () => call((s) => s.integrations.removeJevKey())),
   // Preferences: the icon needs a Dock, which this server may not have.
   CommandHandler.make(SetAppIcon, (p) => call((s) => s.preferences.setAppIcon(p.icon))),
   // The Antasphere account (PRDCT-3259): the server owns the login, or says

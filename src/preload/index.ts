@@ -16,7 +16,16 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdaterState } from '../shared/updater-types'
 import { reportFromWire, type LimitReport } from '../shared/limit-report'
 import type { AgentUpdateId, AgentUpdatesState } from '../shared/agent-updates'
-import type { Artefact, ArtefactVersions, SlidelessState } from '@clave/contract/artefacts/model'
+import type {
+  Artefact,
+  ArtefactDeck,
+  ArtefactShareRequest,
+  ArtefactShareResult,
+  ArtefactVersions,
+  SlidelessAccounts,
+  SlidelessSignIn,
+  SlidelessState
+} from '@clave/contract/artefacts/model'
 import type {
   LaunchProfile,
   LaunchProfilePreferences,
@@ -33,6 +42,9 @@ import type { MergeMethod, PullRef, ReviewEvent } from '../shared/github-pull'
 import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
 import { NEST_SERVER_NOT_NAMED, nestAnswerError } from '../shared/nest-tools'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { DecisionPreference, DecisionPreferencePatch } from '../shared/decision-preferences'
+import type { TabProjects } from '@clave/contract/tab-projects-rules'
+import type { DecisionFailureReason as WireReason } from '@clave/contract/decisions'
 import type { WindowIdentity, Workspace, WorkspaceState } from '../shared/workspace-types'
 import type {
   PluginSecretPrompt,
@@ -42,7 +54,8 @@ import type {
   SessionInfo,
   // ── Lane B (harness wave): provider connections ──
   ProviderConnection,
-  ProviderConnectionAddInput
+  ProviderConnectionAddInput,
+  TabProjectsRead
 } from './index.d'
 import { createMethodRouter, type Endpoint } from '@clave/client/router'
 import { dualListener, workspaceStatePick, type WorkspaceStateFold } from './dual-listener'
@@ -325,6 +338,19 @@ const viaOwnServer = <A extends unknown[], R>(route: {
     if (!backing) throw new Error('The server did not answer')
     return route.server(backing, ...args)
   }
+}
+// The bridge's reasons are the wire's own: one added to either list and not
+// the other is a type error here.
+type SameReasons<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+const reasonsAgree: SameReasons<TabProjectsRead['reason'], WireReason | undefined> = true
+void reasonsAgree
+/** The decisions' read on a server (PRDCT-5179), as the bridge types it. */
+const readTabProjectsOn = async (
+  { api }: Backing,
+  sessionIds: string[]
+): Promise<{ tabs: TabProjectsRead[] }> => {
+  const { tabs } = await api.decisions.readTabProjects(sessionIds)
+  return { tabs: loose<TabProjectsRead[]>(tabs) }
 }
 /** The wire subscriptions `sessionsSubscribe` holds on the server, per session. */
 const heldSubscriptions = new Map<string, () => void>()
@@ -1382,6 +1408,16 @@ const electronAPI = {
     server: async ({ api }, helperId, patch) =>
       loose<HelperPreference[]>(await api.settings.helpers.set(helperId, patch))
   }),
+  // ── Settings: the decisions' switches of this Mac (PRDCT-5179), the same road ──
+  decisionsList: viaServer<[], DecisionPreference[]>({
+    ipc: () => ipcRenderer.invoke('decisions:list'),
+    server: async ({ api }) => loose<DecisionPreference[]>(await api.settings.decisions.list())
+  }),
+  decisionSet: viaServer<[string, DecisionPreferencePatch], DecisionPreference[]>({
+    ipc: (decisionId, patch) => ipcRenderer.invoke('decisions:set', { decisionId, patch }),
+    server: async ({ api }, decisionId, patch) =>
+      loose<DecisionPreference[]>(await api.settings.decisions.set(decisionId, patch))
+  }),
   // ── Settings: the writing styles of this Mac (PRDCT-5166), with a server arm ──
   writingStylesList: viaServer<[], WritingStylesView>({
     ipc: () => ipcRenderer.invoke('writing-styles:list'),
@@ -1448,6 +1484,21 @@ const electronAPI = {
   elevenLabsPreview: viaServer<[string], SpeakResult>({
     ipc: (voiceId) => ipcRenderer.invoke('speech:preview', voiceId),
     server: async ({ api }, voiceId) => (await api.speech.preview({ voiceId })) as SpeakResult
+  }),
+  // The Jev key (PRDCT-5179), on the ElevenLabs key's road: in once, never back.
+  jevSetKey: viaServer<[string], IntegrationsStatus>({
+    ipc: (apiKey) => ipcRenderer.invoke('integrations:jev-set-key', apiKey),
+    server: async ({ api }, apiKey) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.setJevKey(apiKey))
+  }),
+  jevCheck: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:jev-check'),
+    server: async ({ api }) => loose<IntegrationsStatus>(await api.settings.integrations.checkJev())
+  }),
+  jevRemove: viaServer<[], IntegrationsStatus>({
+    ipc: () => ipcRenderer.invoke('integrations:jev-remove'),
+    server: async ({ api }) =>
+      loose<IntegrationsStatus>(await api.settings.integrations.removeJevKey())
   }),
   spawnSession: viaServer<
     [
@@ -1663,6 +1714,13 @@ const electronAPI = {
   ) =>
     onServerEventOf('session.work_changed', (event) =>
       callback({ id: event.id, work: event.work as WorkAssignment | null })
+    ),
+  // PRDCT-5179: which projects a tab works on, as its record now keeps it.
+  onSessionProjectsRead: (
+    callback: (payload: { id: string; projects: TabProjects | null }) => void
+  ) =>
+    onServerEventOf('session.projects_read', (event) =>
+      callback({ id: event.id, projects: event.projects as TabProjects | null })
     ),
   // PRDCT-4997: the tab a tab is nested under, as its record now keeps it.
   onSessionNested: (callback: (payload: { id: string; under: string | null }) => void) =>
@@ -2022,7 +2080,68 @@ const electronAPI = {
     >('artefacts:slideless-state', 'slideless.state_changed', (event) => ({
       serverId: null,
       state: event.state
-    }))
+    })),
+    // ── PRDCT-4266: the Slideless accounts of a machine. This Mac's own copy
+    // here, as its state; a server's id is the fleet wrapper's to route. ──
+    slidelessAccounts: viaOwnServer<[string?], SlidelessAccounts>({
+      ipc: () => ipcRenderer.invoke('artefacts:slidelessAccounts'),
+      server: ({ api }) => api.artefacts.slidelessAccounts()
+    }),
+    checkSlidelessAccounts: viaOwnServer<[string?], SlidelessAccounts>({
+      ipc: () => ipcRenderer.invoke('artefacts:checkSlidelessAccounts'),
+      server: ({ api }) => api.artefacts.checkSlidelessAccounts()
+    }),
+    addSlidelessSite: viaOwnServer<[string, string?], SlidelessAccounts>({
+      ipc: (url) => ipcRenderer.invoke('artefacts:addSlidelessSite', url),
+      server: ({ api }, url) => api.artefacts.addSlidelessSite(url)
+    }),
+    setNewLinksSite: viaOwnServer<[string | null, string?], SlidelessAccounts>({
+      ipc: (origin) => ipcRenderer.invoke('artefacts:setNewLinksSite', origin),
+      server: ({ api }, origin) => api.artefacts.setNewLinksSite(origin)
+    }),
+    runSlidelessFix: viaOwnServer<[string, string, string?], SlidelessAccounts>({
+      ipc: (origin, kind) => ipcRenderer.invoke('artefacts:runSlidelessFix', origin, kind),
+      server: ({ api }, origin, kind) => api.artefacts.runSlidelessFix(origin, kind)
+    }),
+    startSlidelessSignIn: viaOwnServer<
+      [string, { email?: string; hub?: string }, string?],
+      SlidelessSignIn
+    >({
+      ipc: (origin, options) =>
+        ipcRenderer.invoke('artefacts:startSlidelessSignIn', origin, options),
+      server: ({ api }, origin, options) => api.artefacts.startSlidelessSignIn(origin, options)
+    }),
+    // The code and the key travel as arguments only: nothing here keeps or logs them.
+    answerSlidelessSignIn: viaOwnServer<[string, string, string?], SlidelessSignIn>({
+      ipc: (id, code) => ipcRenderer.invoke('artefacts:answerSlidelessSignIn', id, code),
+      server: ({ api }, id, code) => api.artefacts.answerSlidelessSignIn(id, code)
+    }),
+    cancelSlidelessSignIn: viaOwnServer<[string, string?], void>({
+      ipc: (id) => ipcRenderer.invoke('artefacts:cancelSlidelessSignIn', id),
+      server: ({ api }, id) => api.artefacts.cancelSlidelessSignIn(id)
+    }),
+    pasteSlidelessKey: viaOwnServer<[string, string, string?], SlidelessAccounts>({
+      ipc: (origin, key) => ipcRenderer.invoke('artefacts:pasteSlidelessKey', origin, key),
+      server: ({ api }, origin, key) => api.artefacts.pasteSlidelessKey(origin, key)
+    }),
+    // ── PRDCT-4266: an artefact's deck and its links, on the server the session
+    // runs on: this Mac's here, a connected server's routed by `createFleetDesktop`. ──
+    artefactDeck: viaOwnServer<[string, string], ArtefactDeck>({
+      ipc: (sessionId, target) => ipcRenderer.invoke('artefacts:artefactDeck', sessionId, target),
+      server: ({ api }, sessionId, target) => api.artefacts.artefactDeck(sessionId, target)
+    }),
+    shareArtefact: viaOwnServer<[string, string, ArtefactShareRequest], ArtefactShareResult>({
+      ipc: (sessionId, target, request) =>
+        ipcRenderer.invoke('artefacts:shareArtefact', sessionId, target, request),
+      server: ({ api }, sessionId, target, request) =>
+        api.artefacts.shareArtefact(sessionId, target, request)
+    }),
+    revokeArtefactLink: viaOwnServer<[string, string, string], ArtefactDeck>({
+      ipc: (sessionId, target, tokenId) =>
+        ipcRenderer.invoke('artefacts:revokeArtefactLink', sessionId, target, tokenId),
+      server: ({ api }, sessionId, target, tokenId) =>
+        api.artefacts.revokeArtefactLink(sessionId, target, tokenId)
+    })
   },
   // PRDCT-4980: a session's deck alone in a window of its own
   // that main makes; this window holds the preview and hands main its address.
@@ -2204,6 +2323,18 @@ const electronAPI = {
     ipc: (request) => ipcRenderer.invoke('speech:speak', request),
     server: async ({ api }, { sessionId, text }) =>
       (await api.speech.speak({ sessionId, text })) as SpeakResult
+  }),
+  // Which projects these tabs work on (PRDCT-5179), asked of the server the
+  // tabs run on, which holds the Jev key and the records; the same road as
+  // the speech. Main reads no tab for it: before main names its server, the
+  // call waits for it, as the digests do for a server of their own.
+  readTabProjects: viaOwnServer<[string[]], { tabs: TabProjectsRead[] }>({
+    ipc: async (sessionIds) => {
+      const backing = serverBacking ?? (await serverWithin(DIGEST_SERVER_WAIT_MS))
+      if (!backing) throw new Error('The server did not answer')
+      return readTabProjectsOn(backing, sessionIds)
+    },
+    server: (backing, sessionIds) => readTabProjectsOn(backing, sessionIds)
   }),
   pageTitle: viaOwnServer<[PageTitleRequest], PageTitleResult>({
     ipc: (request) => ipcRenderer.invoke('pages:title', request),

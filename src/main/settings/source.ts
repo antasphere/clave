@@ -61,6 +61,8 @@ import type {
   HelperPreferenceView
 } from '../helpers/preferences'
 import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
+import type { JevStatus } from '../../shared/jev'
+import type { DecisionPreference, DecisionPreferencePatch } from '../../shared/decision-preferences'
 import type { WritingStylesView } from '../../shared/writing-styles'
 // ── Lane B (harness wave): provider connections ──
 import type {
@@ -116,6 +118,15 @@ export interface IntegrationsLike {
   voices(): Promise<{ voices: ElevenLabsVoice[] }>
 }
 
+/** The Jev key of a host as the source needs it (PRDCT-5179,
+ *  `../integrations/jev.ts`'s `JevIntegration`). */
+export interface JevLike {
+  status(): JevStatus
+  setKey(apiKey: string): Promise<JevStatus>
+  check(): Promise<JevStatus>
+  removeKey(): Promise<JevStatus>
+}
+
 // Lane C of the harness wave (PRDCT-4496): the models catalogue
 /** The models catalogue of a host as the source needs it
  *  (`../models-catalog.ts`'s `ModelsCatalog`). */
@@ -149,12 +160,24 @@ export interface SettingsManagers {
       patch: HelperPreferencePatch
     ): HelperPreferenceView[] | Promise<HelperPreferenceView[]>
   }
+  /** The decisions' switches on this host (PRDCT-5179,
+   *  `../decisions/preferences.ts`); absent, refused. */
+  decisions?: {
+    list(): DecisionPreference[] | Promise<DecisionPreference[]>
+    set(
+      id: string,
+      patch: DecisionPreferencePatch
+    ): DecisionPreference[] | Promise<DecisionPreference[]>
+  }
   /** The writing styles of this host (PRDCT-5166,
    *  `../writing-styles/store.ts`); absent, refused. */
   writingStyles?: WritingStylesLike
   /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
    *  on its own secret port; absent, refused. */
   integrations?: IntegrationsLike
+  /** The Jev key of this host (PRDCT-5179), sealed beside the ElevenLabs
+   *  one; absent, its writes are refused and the answers carry no Jev card. */
+  jev?: JevLike
   /** Where the process has a PTY for a login (the shell); absent, a login is
    *  refused. Loaded on the first call, not at construction: the login
    *  manager pulls the PTY backend in, which the shell must not load from
@@ -311,6 +334,17 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
   // status each write answers.
   const integrations = (): IntegrationsLike =>
     m.integrations ?? refuse('integrations', 'This server has no integrations.')
+  // The Jev key (PRDCT-5179): EVERY integrations answer carries both
+  // statuses, the ElevenLabs writes included, so a page never loses one card
+  // by acting on the other.
+  const jev = (): JevLike => m.jev ?? refuse('integrations', 'This server holds no Jev key.')
+  const withJev = (
+    elevenLabs: ElevenLabsStatus,
+    jevStatus: JevStatus | undefined = m.jev?.status()
+  ): { elevenLabs: ElevenLabsStatus; jev?: JevStatus } => ({
+    elevenLabs,
+    ...(jevStatus && { jev: jevStatus })
+  })
   const styles = (): WritingStylesLike =>
     m.writingStyles ?? refuse('writingStyles', 'This server keeps no writing styles.')
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
@@ -459,6 +493,14 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
             })
           : refuse('helpers', 'This server runs no helpers.')
     },
+    decisions: {
+      list: () =>
+        m.decisions ? m.decisions.list() : refuse('decisions', 'This server runs no decisions.'),
+      set: (id, patch) =>
+        m.decisions
+          ? m.decisions.set(id, { ...patch })
+          : refuse('decisions', 'This server runs no decisions.')
+    },
     writingStyles: {
       list: () => styles().view(),
       save: (draft) => styles().save({ ...draft }),
@@ -467,16 +509,25 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
       importClaude: () => styles().importClaudeOutputStyle()
     },
     integrations: {
-      read: () => ({ elevenLabs: integrations().status() }),
-      setElevenLabsKey: async (apiKey) => ({
-        elevenLabs: await integrations().setKey(apiKey)
-      }),
-      checkElevenLabs: async () => ({ elevenLabs: await integrations().check() }),
-      removeElevenLabsKey: async () => ({ elevenLabs: await integrations().removeKey() }),
-      setElevenLabsVoice: async (voiceId, voiceName, modelId) => ({
-        elevenLabs: await integrations().setVoice(voiceId, voiceName, modelId)
-      }),
-      listElevenLabsVoices: () => integrations().voices()
+      read: () => withJev(integrations().status()),
+      setElevenLabsKey: async (apiKey) => withJev(await integrations().setKey(apiKey)),
+      checkElevenLabs: async () => withJev(await integrations().check()),
+      removeElevenLabsKey: async () => withJev(await integrations().removeKey()),
+      setElevenLabsVoice: async (voiceId, voiceName, modelId) =>
+        withJev(await integrations().setVoice(voiceId, voiceName, modelId)),
+      listElevenLabsVoices: () => integrations().voices(),
+      setJevKey: async (apiKey) => {
+        const status = await jev().setKey(apiKey)
+        return withJev(integrations().status(), status)
+      },
+      checkJev: async () => {
+        const status = await jev().check()
+        return withJev(integrations().status(), status)
+      },
+      removeJevKey: async () => {
+        const status = await jev().removeKey()
+        return withJev(integrations().status(), status)
+      }
     },
     preferences: {
       setAppIcon: (icon) => {

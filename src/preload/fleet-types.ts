@@ -23,6 +23,7 @@ import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
 import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
+import type { DecisionPreference, DecisionPreferencePatch } from '../shared/decision-preferences'
 import type { SpeakResult } from '../shared/speech'
 import type { InputKind } from '@clave/contract/input-kinds'
 import type {
@@ -164,6 +165,14 @@ export interface FleetDesktopAPI {
     helperId: string,
     patch: HelperPreferencePatch
   ): Promise<HelperPreference[]>
+  /** The decisions' switches of a server (PRDCT-5179), read and written on
+   *  that server: the runner there reads them at each decision. */
+  fleetDecisions(serverId: string): Promise<DecisionPreference[]>
+  fleetDecisionSet(
+    serverId: string,
+    decisionId: string,
+    patch: DecisionPreferencePatch
+  ): Promise<DecisionPreference[]>
   /** The writing styles of a server (PRDCT-5166), read and written on that
    *  server: the tabs it launches read them there. Each answers the view. */
   fleetWritingStyles(serverId: string): Promise<WritingStylesView>
@@ -186,6 +195,11 @@ export interface FleetDesktopAPI {
   fleetElevenLabsVoices(serverId: string): Promise<{ voices: ElevenLabsVoice[] }>
   /** A voice's preview sample, fetched by that server (PRDCT-4411). */
   fleetElevenLabsPreview(serverId: string, voiceId: string): Promise<SpeakResult>
+  /** The Jev key of a server (PRDCT-5179), sealed there beside its
+   *  ElevenLabs key; each answers the status of both. */
+  fleetJevSetKey(serverId: string, apiKey: string): Promise<IntegrationsStatus>
+  fleetJevCheck(serverId: string): Promise<IntegrationsStatus>
+  fleetJevRemove(serverId: string): Promise<IntegrationsStatus>
   /** A server's settings as they change, from its live push socket: delivered while the connection is open; a page reads the lists again when the server (re)connects. */
   onFleetSettingsEvent(callback: (event: FleetSettingsEvent) => void): () => void
   // ── PRDCT-4149: the routines a connected server runs, read and driven from the Mac ──

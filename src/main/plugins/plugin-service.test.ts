@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Schema } from 'effect'
@@ -17,7 +17,12 @@ import type {
 } from '../sessions/adapter'
 import { createPluginService, type PluginService } from './plugin-service'
 import { pluginGroupsOf } from './plugin-groups-map'
-import type { RunnerProcess, RunnerSpawner } from './plugin-host'
+import {
+  pluginSlideless,
+  type RunnerProcess,
+  type RunnerSpawn,
+  type RunnerSpawner
+} from './plugin-host'
 
 // The service as the server's port, over a real store on disk, a fake runner
 // per plugin (the host's own tests cover the runner protocol) and a session
@@ -378,6 +383,28 @@ describe('the plugin service as the server port', () => {
       { pluginId: 'test.surface', name: 'Plugin test.surface', title: 'Shown' }
     ])
     expect(shown.some((e) => e._tag === 'plugins.notified')).toBe(false)
+  })
+  it('tells every plugin process where the server’s own copy of Slideless is (PRDCT-4499)', () => {
+    service.close()
+    const spawns: RunnerSpawn[] = []
+    const slideless = pluginSlideless(join(temporary, 'server'), '/opt/clave/node')
+    service = createPluginService({
+      root: join(temporary, 'user'),
+      bundled: join(temporary, 'bundled'),
+      version: '1.90.2',
+      spawner: (spawn) => {
+        spawns.push(spawn)
+        return spawner(spawn)
+      },
+      manager,
+      slideless
+    })
+    expect(spawns.at(-1)!.env).toMatchObject({
+      CLAVE_SLIDELESS_NODE: '/opt/clave/node',
+      CLAVE_SLIDELESS_HOST: join(temporary, 'server', 'slideless', 'preview-host.mjs'),
+      CLAVE_SLIDELESS_CLI_DIR: join(temporary, 'server', 'slideless', 'cli')
+    })
+    expect(existsSync(slideless.host)).toBe(true)
   })
   it('lists the sessions of its own manager to a plugin, and sends to a chat session as a user message', () => {
     const sessions = service.host['services'].sessions

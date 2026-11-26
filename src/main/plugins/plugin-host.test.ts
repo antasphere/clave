@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { PluginSession } from '@clave/plugin-sdk'
+import { PREVIEW_HOST_SOURCE } from '../artefacts/preview-host'
 import {
   PluginHost,
+  pluginSlideless,
   validateActionPreview,
   validateActionResult,
   validateActionTarget,
@@ -522,6 +524,93 @@ describe('plugin actions', () => {
     const dir = join(temporary, 'user', 'data', 'example.host')
     expect(electron.spawns.at(-1)!.env.CLAVE_PLUGIN_DATA_DIR).toBe(dir)
     expect(existsSync(dir)).toBe(true)
+  })
+})
+
+describe('where the server’s own copy of Slideless is (PRDCT-4499)', () => {
+  const NODE = '/Applications/Clave.app/Contents/MacOS/Clave'
+  /** What the host takes of its own environment, whatever this machine sets. */
+  const TRIMMED = ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'SystemRoot', 'ELECTRON_RUN_AS_NODE']
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  /** A host told where the copy is, under a data folder of this test's own. */
+  function withSlideless(): {
+    slideless: ReturnType<typeof pluginSlideless>
+    hostAtSpawn: boolean[]
+  } {
+    host.close()
+    const slideless = pluginSlideless(join(temporary, 'server'), NODE)
+    const hostAtSpawn: boolean[] = []
+    host = new PluginHost(
+      store,
+      services,
+      (spawn) => {
+        hostAtSpawn.push(existsSync(slideless.host))
+        return spawner(spawn)
+      },
+      slideless
+    )
+    return { slideless, hostAtSpawn }
+  }
+
+  it('tells the plugin process the Node, the host, the copy’s folder and the override, the host written first, and nothing else of the host’s environment', () => {
+    vi.stubEnv('CLAVE_SLIDELESS_CLI', '/work/slideless/dist/bin.js')
+    vi.stubEnv('CLAVE_TEST_SECRET', 'sk-never-for-a-plugin')
+    const { slideless, hostAtSpawn } = withSlideless()
+    expect(slideless).toEqual({
+      node: NODE,
+      host: join(temporary, 'server', 'slideless', 'preview-host.mjs'),
+      cliDir: join(temporary, 'server', 'slideless', 'cli')
+    })
+    host.startAll()
+    const env = electron.spawns.at(-1)!.env
+    expect(env).toMatchObject({
+      CLAVE_SLIDELESS_NODE: NODE,
+      CLAVE_SLIDELESS_HOST: slideless.host,
+      CLAVE_SLIDELESS_CLI_DIR: slideless.cliDir,
+      CLAVE_SLIDELESS_CLI: '/work/slideless/dist/bin.js'
+    })
+    expect(Object.keys(env).sort()).toEqual(
+      [
+        ...TRIMMED.filter((key) => process.env[key]),
+        'CLAVE_PLUGIN_DATA_DIR',
+        'CLAVE_SLIDELESS_NODE',
+        'CLAVE_SLIDELESS_HOST',
+        'CLAVE_SLIDELESS_CLI_DIR',
+        'CLAVE_SLIDELESS_CLI'
+      ].sort()
+    )
+    expect(env.CLAVE_TEST_SECRET).toBeUndefined()
+    // The preview host was on disk when the plugin's process was started.
+    expect(hostAtSpawn).toEqual([true])
+    expect(readFileSync(slideless.host, 'utf8')).toBe(PREVIEW_HOST_SOURCE)
+  })
+
+  it('passes no override the host’s own environment does not set', () => {
+    vi.stubEnv('CLAVE_SLIDELESS_CLI', undefined)
+    withSlideless()
+    host.startAll()
+    const env = electron.spawns.at(-1)!.env
+    expect(env.CLAVE_SLIDELESS_NODE).toBe(NODE)
+    expect('CLAVE_SLIDELESS_CLI' in env).toBe(false)
+  })
+
+  it('tells a plugin nothing of Slideless when the host was given no copy', () => {
+    vi.stubEnv('CLAVE_SLIDELESS_CLI', '/work/slideless/dist/bin.js')
+    host.startAll()
+    const env = electron.spawns.at(-1)!.env
+    expect(Object.keys(env).filter((key) => key.startsWith('CLAVE_SLIDELESS'))).toEqual([])
+  })
+
+  it('writes the host again before a later start when it has gone', () => {
+    const { slideless, hostAtSpawn } = withSlideless()
+    host.startAll()
+    rmSync(slideless.host)
+    host.stop('example.host')
+    host.start('example.host')
+    expect(hostAtSpawn).toEqual([true, true])
   })
 })
 

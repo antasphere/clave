@@ -33,6 +33,8 @@ import { workspaceManager } from '../workspace-manager'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
 import { installWritingStyles, writingStylesStore } from '../writing-styles/store'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
+import { jevIntegration } from '../integrations/jev'
+import { decisionPreferences, installDecisionPreferences } from '../decisions/preferences'
 import { settingsSourceFromManagers } from './source'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { installE2eHooks } from '../sessions/e2e-hooks'
@@ -70,6 +72,8 @@ export function standaloneSettingsSource(
   })
   // The helpers run here read this server's preference at each call (PRDCT-4330).
   installHelperPreferences(helperPreferences)
+  // And the decisions read its switches, on its own Jev key (PRDCT-5179).
+  installDecisionPreferences(decisionPreferences)
   // The tabs this server spawns read its writing styles (PRDCT-5166).
   installWritingStyles(writingStylesStore)
   // The ports are installed: the stored session is read back now. A state,
@@ -86,8 +90,11 @@ export function standaloneSettingsSource(
     preferences: preferencesManager,
     workspaces: workspaceManager,
     helpers: helperPreferences,
+    decisions: decisionPreferences,
     writingStyles: writingStylesStore,
     integrations: elevenLabsIntegration,
+    // The Jev key (PRDCT-5179), sealed beside the ElevenLabs one.
+    jev: jevIntegration,
     // Lane C of the harness wave (PRDCT-4496): the models catalogue
     modelsCatalog,
     // Lane C of the harness wave (PRDCT-4496): a connection's usage line

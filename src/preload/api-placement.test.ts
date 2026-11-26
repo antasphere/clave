@@ -95,6 +95,8 @@ const UNREADABLE_NO_PLACE = new Set([
   'launchProfileSetWorkspace',
   'helpersList',
   'helperSet',
+  'decisionsList',
+  'decisionSet',
   'writingStylesList',
   'writingStyleSave',
   'writingStyleDelete',
@@ -107,6 +109,9 @@ const UNREADABLE_NO_PLACE = new Set([
   'elevenLabsSetVoice',
   'elevenLabsVoices',
   'elevenLabsPreview',
+  'jevSetKey',
+  'jevCheck',
+  'jevRemove',
   'mobileRelayRead',
   'mobileRelaySet',
   'mobileRelayStatus',
@@ -411,7 +416,13 @@ describe('routed reaches the server a key names; refused never does', () => {
     [S, null],
     [{ path: resourceKey('file', 'x', ATTACHMENT) }],
     // A server's own id (the Slideless copy of a machine, PRDCT-4474).
-    ['x']
+    ['x'],
+    // A list of tabs of one server (the decisions' read, PRDCT-5179).
+    [[S]],
+    // A server's own id after the call's own arguments (a machine's Slideless
+    // accounts, PRDCT-4266: `addSlidelessSite(url, serverId)`,
+    // `runSlidelessFix(origin, kind, serverId)`).
+    ['x', 'x', 'x']
   ]
   /** Routed members that make no call of their own: they read or release
    *  what the routed members got from the server. Pinned below. */

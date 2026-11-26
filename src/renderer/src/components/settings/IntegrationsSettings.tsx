@@ -16,13 +16,18 @@ import {
 } from '../../../../shared/elevenlabs'
 import {
   EMPTY_MACHINE_INTEGRATIONS,
+  JEV_NEEDS_UPDATE,
   accountFigure,
   checkElevenLabs,
+  checkJev,
+  checkedOnLine,
   loadElevenLabsVoices,
   loadIntegrations,
   modelChoices,
   removeElevenLabsKey,
+  removeJevKey,
   setElevenLabsKey,
+  setJevKey,
   setElevenLabsVoice,
   setOnLine,
   useIntegrationsStore,
@@ -37,6 +42,8 @@ import {
   SettingsSelect
 } from './primitives'
 import { PlayingGlyph, VoiceDrawing } from './VoiceDrawing'
+import { DecisionDrawing } from './DecisionDrawing'
+import { JEV_WHAT_LEAVES, type JevStatus } from '../../../../shared/jev'
 
 /**
  * The Integrations page of the Agents group (PRDCT-4410): what a machine can
@@ -50,7 +57,149 @@ import { PlayingGlyph, VoiceDrawing } from './VoiceDrawing'
  * The card carries its figure (`VoiceDrawing`): drawn in full beside the
  * field while there is no key, small and still beside the account once there
  * is one.
+ *
+ * Under it, the Jev card (PRDCT-5179): the TypeSafe key the decisions are
+ * asked with, sealed the same way and on the same machine, with its own
+ * figure (`DecisionDrawing`). The two cards share the paste row and the
+ * key's actions; each says its own words.
  */
+
+/** The row a key is pasted in, shared by the cards (PRDCT-5179): the
+ *  figure beside it while there is no key, the card's own words, the field,
+ *  and Save (with Cancel when it replaces a key). The paste leaves the page
+ *  once the machine has it; a failed save keeps it in the field. */
+function PasteKeyRow({
+  figure,
+  title,
+  children,
+  placeholder,
+  ariaLabel,
+  testPrefix,
+  busy,
+  onSave,
+  onCancel
+}: {
+  figure: ReactNode
+  title: string
+  /** The words under the title, when the card has any. */
+  children?: ReactNode
+  placeholder: string
+  ariaLabel: string
+  /** The `data-testid` prefix of the field and its buttons. */
+  testPrefix: string
+  busy: boolean
+  onSave: (apiKey: string) => Promise<boolean>
+  /** Set when the field replaces a key already there: no figure then. */
+  onCancel?: () => void
+}): ReactElement {
+  const [value, setValue] = useState('')
+  const submit = async (): Promise<void> => {
+    if (busy || !value.trim()) return
+    const saved = await onSave(value)
+    // The paste leaves the page either way once the machine has it.
+    if (saved) {
+      setValue('')
+      onCancel?.()
+    }
+  }
+  return (
+    <div
+      className="settings-row integration-row"
+      data-integration-empty={onCancel ? undefined : ''}
+    >
+      {!onCancel && figure}
+      <div className="min-w-0 flex-1">
+        <p className="settings-row-title">{title}</p>
+        {children}
+        <input
+          className="input-compact mt-2 w-full max-w-md"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder={placeholder}
+          aria-label={ariaLabel}
+          data-testid={`${testPrefix}-key-input`}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void submit()
+          }}
+        />
+      </div>
+      <div className="settings-row-controls">
+        {onCancel && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onCancel}
+            data-testid={`${testPrefix}-key-cancel`}
+          >
+            Cancel
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || !value.trim()}
+          onClick={() => void submit()}
+          data-testid={`${testPrefix}-key-save`}
+        >
+          {busy ? 'Checking…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** A stored key's three actions, shared by the cards: Check again (when
+ *  `onCheck` is given), Replace, Remove. */
+function KeyActions({
+  testPrefix,
+  busy,
+  onCheck,
+  onReplace,
+  onRemove
+}: {
+  testPrefix: string
+  busy: boolean
+  onCheck?: () => void
+  onReplace: () => void
+  onRemove: () => void
+}): ReactElement {
+  return (
+    <div className="settings-row-controls">
+      {onCheck && (
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={busy}
+          onClick={onCheck}
+          data-testid={`${testPrefix}-check`}
+        >
+          Check again
+        </button>
+      )}
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={busy}
+        onClick={onReplace}
+        data-testid={`${testPrefix}-replace`}
+      >
+        Replace
+      </button>
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={busy}
+        onClick={onRemove}
+        data-testid={`${testPrefix}-remove`}
+      >
+        Remove
+      </button>
+    </div>
+  )
+}
 
 function KeyField({
   machine,
@@ -64,69 +213,26 @@ function KeyField({
   /** Set when the field replaces a key already there: no figure then. */
   onCancel?: () => void
 }): ReactElement {
-  const [value, setValue] = useState('')
-  const submit = async (): Promise<void> => {
-    if (busy || !value.trim()) return
-    const saved = await setElevenLabsKey(machine, value)
-    // The paste leaves the page either way once the machine has it.
-    if (saved) {
-      setValue('')
-      onCancel?.()
-    }
-  }
   return (
-    <div
-      className="settings-row integration-row"
-      data-integration-empty={onCancel ? undefined : ''}
+    <PasteKeyRow
+      figure={<VoiceDrawing />}
+      title={onCancel ? 'New key' : 'API key'}
+      placeholder="sk_…"
+      ariaLabel="ElevenLabs API key"
+      testPrefix="elevenlabs"
+      busy={busy}
+      onSave={(apiKey) => setElevenLabsKey(machine, apiKey)}
+      onCancel={onCancel}
     >
-      {!onCancel && <VoiceDrawing />}
-      <div className="min-w-0 flex-1">
-        <p className="settings-row-title">{onCancel ? 'New key' : 'API key'}</p>
-        <p className="settings-row-description">
-          {onCancel
-            ? `Takes the place of the key on ${machineName} once ElevenLabs accepts it.`
-            : `Folio reads its pages aloud in the voice you choose. The key is sealed on ${machineName} and never shown again.`}
-        </p>
-        <p className="settings-row-description" data-testid="elevenlabs-key-permissions">
-          {ELEVENLABS_KEY_PERMISSIONS}
-        </p>
-        <input
-          className="input-compact mt-2 w-full max-w-md"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder="sk_…"
-          aria-label="ElevenLabs API key"
-          data-testid="elevenlabs-key-input"
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') void submit()
-          }}
-        />
-      </div>
-      <div className="settings-row-controls">
-        {onCancel && (
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={onCancel}
-            data-testid="elevenlabs-key-cancel"
-          >
-            Cancel
-          </button>
-        )}
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={busy || !value.trim()}
-          onClick={() => void submit()}
-          data-testid="elevenlabs-key-save"
-        >
-          {busy ? 'Checking…' : 'Save'}
-        </button>
-      </div>
-    </div>
+      <p className="settings-row-description">
+        {onCancel
+          ? `Takes the place of the key on ${machineName} once ElevenLabs accepts it.`
+          : `Folio reads its pages aloud in the voice you choose. The key is sealed on ${machineName} and never shown again.`}
+      </p>
+      <p className="settings-row-description" data-testid="elevenlabs-key-permissions">
+        {ELEVENLABS_KEY_PERMISSIONS}
+      </p>
+    </PasteKeyRow>
   )
 }
 
@@ -183,37 +289,17 @@ function KeyRow({
           </div>
         )}
       </div>
-      <div className="settings-row-controls">
-        {(status.lastError || status.checkedAt === null || noFigures) && (
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={busy}
-            onClick={() => void checkElevenLabs(machine)}
-            data-testid="elevenlabs-check"
-          >
-            Check again
-          </button>
-        )}
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={busy}
-          onClick={onReplace}
-          data-testid="elevenlabs-replace"
-        >
-          Replace
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={busy}
-          onClick={() => void removeElevenLabsKey(machine)}
-          data-testid="elevenlabs-remove"
-        >
-          Remove
-        </button>
-      </div>
+      <KeyActions
+        testPrefix="elevenlabs"
+        busy={busy}
+        onCheck={
+          status.lastError || status.checkedAt === null || noFigures
+            ? () => void checkElevenLabs(machine)
+            : undefined
+        }
+        onReplace={onReplace}
+        onRemove={() => void removeElevenLabsKey(machine)}
+      />
     </div>
   )
 }
@@ -410,6 +496,133 @@ function ModelRow({
   )
 }
 
+/** The Jev key's row once a key is set (PRDCT-5179): since when, when it
+ *  was last checked or TypeSafe's refusal, and the three actions. Jev has no
+ *  voice and no model to pick: nothing else. */
+function JevKeyRow({
+  machine,
+  status,
+  busy,
+  onReplace
+}: {
+  machine: string
+  status: JevStatus
+  busy: boolean
+  onReplace: () => void
+}): ReactElement {
+  return (
+    <div className="settings-row integration-row" data-jev-key="set">
+      <DecisionDrawing quiet />
+      <div className="min-w-0 flex-1">
+        <p className="settings-row-title">Key</p>
+        <p className="settings-row-description" data-testid="jev-key-set-on">
+          {setOnLine(status.setAt)}
+        </p>
+        {status.lastError ? (
+          <p className="text-xs text-destructive" role="alert" data-testid="jev-check-error">
+            {status.lastError}
+          </p>
+        ) : (
+          <p className="settings-row-description" data-testid="jev-checked">
+            {checkedOnLine(status.checkedAt) ?? 'Not checked yet.'}
+          </p>
+        )}
+      </div>
+      <KeyActions
+        testPrefix="jev"
+        busy={busy}
+        onCheck={() => void checkJev(machine)}
+        onReplace={onReplace}
+        onRemove={() => void removeJevKey(machine)}
+      />
+    </div>
+  )
+}
+
+/** The Jev card of one machine (PRDCT-5179), under the ElevenLabs one: the
+ *  key that lets Clave ask its decisions, sealed on that machine. */
+function JevSection({
+  machine,
+  machineName,
+  state
+}: {
+  machine: string
+  machineName: string
+  state: MachineIntegrations
+}): ReactElement | null {
+  // The open Replace field belongs to the machine it was opened for.
+  const [replacingOn, setReplacingOn] = useState<string | null>(null)
+  const replacing = replacingOn === machine
+  const setReplacing = (open: boolean): void => setReplacingOn(open ? machine : null)
+  const status = state.jev
+  // The machine's integrations could not be read: the ElevenLabs card says
+  // so for both.
+  if (state.status === 'error' && !status && !state.jevOutdated) return null
+  let body: ReactNode
+  if (state.jevOutdated)
+    body = (
+      <SettingsCallout
+        role="status"
+        title={JEV_NEEDS_UPDATE}
+        text={`${machineName} runs a Clave server released before Jev. Its decisions run once it is updated (Settings → Servers).`}
+      />
+    )
+  else
+    body = (
+      <SettingsCard data-integration="jev" data-integration-machine={machine}>
+        {!status ? (
+          <div className="settings-row">
+            <p className="settings-row-description">Reading…</p>
+          </div>
+        ) : !status.configured ? (
+          <PasteKeyRow
+            figure={<DecisionDrawing />}
+            title="API key"
+            placeholder="ts_…"
+            ariaLabel="Jev API key"
+            testPrefix="jev"
+            busy={state.busy}
+            onSave={(apiKey) => setJevKey(machine, apiKey)}
+          />
+        ) : (
+          <>
+            <JevKeyRow
+              machine={machine}
+              status={status}
+              busy={state.busy}
+              onReplace={() => setReplacing(true)}
+            />
+            {replacing && (
+              <PasteKeyRow
+                figure={null}
+                title="New key"
+                placeholder="ts_…"
+                ariaLabel="Jev API key"
+                testPrefix="jev"
+                busy={state.busy}
+                onSave={(apiKey) => setJevKey(machine, apiKey)}
+                onCancel={() => setReplacing(false)}
+              >
+                <p className="settings-row-description">
+                  {`Takes the place of the key on ${machineName}; it is checked against TypeSafe at once.`}
+                </p>
+              </PasteKeyRow>
+            )}
+          </>
+        )}
+      </SettingsCard>
+    )
+  return (
+    <SettingsSection
+      title="Jev"
+      description={`${JEV_WHAT_LEAVES} The key is sealed on ${machineName} and never shown again.`}
+    >
+      {body}
+      {state.jevError && <SettingsCallout tone="danger" role="alert" text={state.jevError} />}
+    </SettingsSection>
+  )
+}
+
 /** The page's body for one machine: its integrations, read when it opens. */
 export function IntegrationsList({
   machine,
@@ -487,15 +700,18 @@ export function IntegrationsList({
       </SettingsCard>
     )
   return (
-    <SettingsSection
-      title="ElevenLabs"
-      description={`The voice Folio reads aloud with on ${machineName}. Each machine holds its own key.`}
-    >
-      {body}
-      {state.status !== 'error' && state.error && (
-        <SettingsCallout tone="danger" role="alert" text={state.error} />
-      )}
-    </SettingsSection>
+    <>
+      <SettingsSection
+        title="ElevenLabs"
+        description={`The voice Folio reads aloud with on ${machineName}. Each machine holds its own key.`}
+      >
+        {body}
+        {state.status !== 'error' && state.error && (
+          <SettingsCallout tone="danger" role="alert" text={state.error} />
+        )}
+      </SettingsSection>
+      <JevSection machine={machine} machineName={machineName} state={state} />
+    </>
   )
 }
 

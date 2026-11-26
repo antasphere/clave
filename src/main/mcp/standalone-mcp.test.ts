@@ -2577,6 +2577,39 @@ describe('clave_attach_session on the server (PRDCT-4997)', () => {
     expect(sessions.find((s) => s.id === 'helper')?.nestedUnder).toBe('old')
     expect(sessions.find((s) => s.id === 'old')?.nestedUnder).toBeNull()
   })
+
+  it('lists which projects a tab works on as its record keeps the reading, nothing when never read (PRDCT-5179)', async () => {
+    const reading = {
+      status: 'decided' as const,
+      picks: [{ file: '/w/quill/.clave/workspaces/default.clave', name: 'Quill', p: 0.94 }],
+      fits: 0.9,
+      readAt: 1,
+      model: 'jev-1.14.0',
+      basis: 'b'
+    }
+    let all: () => Session[] = () => []
+    const f = await sessionFixture({
+      host: {
+        listAdoptableRecords: (ids?: ReadonlyArray<string>) =>
+          all()
+            .map((t) => record(t.id, t.id === 'read' ? { projects: reading } : {}))
+            .filter((r) => !ids || ids.includes(r.id))
+      }
+    })
+    all = () => [...f.sessions.values()]
+    f.sessions.set('read', tab('read'))
+    f.sessions.set('unread', tab('unread'))
+    const { sessions } = payload(
+      await f.client.callTool({ name: 'clave_list', arguments: {} })
+    ) as {
+      sessions: Array<Record<string, unknown>>
+    }
+    expect(sessions.find((s) => s.id === 'read')?.projects).toEqual({
+      status: 'decided',
+      names: [{ name: 'Quill', share: 0.94 }]
+    })
+    expect(sessions.find((s) => s.id === 'unread')).not.toHaveProperty('projects')
+  })
 })
 
 // PRDCT-5166: an open names the writing style its tab starts with; the

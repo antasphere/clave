@@ -54,6 +54,8 @@ export interface NormalizedGroup {
   prompt?: string | null
   rootSession?: boolean
   templateId?: string
+  /** Named by Clave from its tabs' projects (PRDCT-5179). */
+  autoNamed?: boolean
   color?: string | null
   view?: { url: string; title?: string; terminalId?: string | null } | null
   workspaceId?: string
@@ -98,6 +100,7 @@ export function normalizeLayout(data: unknown): NormalizedLayout {
     if (raw.rootSession === true) group.rootSession = true
     if (typeof raw.templateId === 'string' && raw.templateId.length > 0)
       group.templateId = raw.templateId
+    if (raw.autoNamed === true) group.autoNamed = true
     if (typeof raw.color === 'string' || raw.color === null) group.color = raw.color
     if (raw.view === null) group.view = null
     else if (isRecord(raw.view) && typeof raw.view.url === 'string') {

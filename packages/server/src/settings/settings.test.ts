@@ -225,6 +225,37 @@ describe('the helpers on the server (PRDCT-4330)', () => {
   })
 })
 
+describe('the decisions on the server (PRDCT-5179)', () => {
+  it('lists the host’s decisions and switches one, passing only what was sent', async () => {
+    const listed = await get('/decisions')
+    expect(listed.status).toBe(200)
+    expect(await listed.json()).toEqual({ decisions: fake.decisionList })
+    const off = await post('/decisions', { id: 'tab-project', enabled: false })
+    expect(off.status).toBe(200)
+    expect(await off.json()).toEqual({
+      decisions: [expect.objectContaining({ id: 'tab-project', enabled: false })]
+    })
+    const untouched = await post('/decisions', { id: 'tab-project' })
+    expect(await untouched.json()).toEqual({
+      decisions: [expect.objectContaining({ id: 'tab-project', enabled: false })]
+    })
+    expect(fake.calls.filter((c) => c.method === 'decisions.set')).toEqual([
+      { method: 'decisions.set', args: ['tab-project', { enabled: false }] },
+      { method: 'decisions.set', args: ['tab-project', {}] }
+    ])
+  })
+
+  it('refuses an unknown decision with its sentence, and a switch it cannot decode', async () => {
+    const unknown = await post('/decisions', { id: 'nope', enabled: false })
+    expect(unknown.status).toBe(422)
+    expect(await unknown.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'There is no decision "nope" on this machine.'
+    })
+    expect((await post('/decisions', { id: 'tab-project', enabled: 'yes' })).status).toBe(400)
+  })
+})
+
 describe('the writing styles on the server (PRDCT-5166)', () => {
   it('lists the host’s styles, every field, and saves a draft as it was sent', async () => {
     fake.styles = { ...fake.styles, claudeOutputStyle: { name: 'Field notes' } }
@@ -342,6 +373,55 @@ describe('the integrations on the server (PRDCT-4410)', () => {
       capability: 'integrations'
     })
     expect((await post('/integrations/elevenlabs/key', { apiKey: KEY })).status).toBe(422)
+    expect(fake.secrets).toEqual([])
+  })
+})
+
+describe('the Jev key on the server (PRDCT-5179)', () => {
+  const KEY = 'jev-server-test-key'
+  it('hands the key to the source and to no answer, and keeps the other card', async () => {
+    const before = await get('/integrations')
+    expect(await before.json()).toMatchObject({
+      elevenLabs: { configured: false },
+      jev: { configured: false }
+    })
+    const set = await post('/integrations/jev/key', { apiKey: KEY })
+    expect(set.status).toBe(200)
+    const text = await set.text()
+    expect(text).not.toContain(KEY)
+    expect(JSON.parse(text)).toMatchObject({
+      elevenLabs: { configured: false },
+      jev: { configured: true, setAt: 1 }
+    })
+    expect(fake.secrets).toEqual([KEY])
+    expect(fake.calls.find((c) => c.method === 'integrations.setJevKey')?.args).toEqual([])
+    expect(await (await get('/integrations')).text()).not.toContain(KEY)
+  })
+
+  it('checks and removes the key', async () => {
+    await post('/integrations/jev/key', { apiKey: KEY })
+    const checked = await post('/integrations/jev/check', {})
+    expect(checked.status).toBe(200)
+    expect(await checked.json()).toMatchObject({ jev: { configured: true, checkedAt: 2 } })
+    const removed = await post('/integrations/jev/remove', {})
+    expect(await removed.json()).toMatchObject({ jev: { configured: false, setAt: null } })
+  })
+
+  it('says a refusal in its sentence, and a host with none as unavailable', async () => {
+    const check = await post('/integrations/jev/check', {})
+    expect(check.status).toBe(422)
+    expect(await check.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'No Jev key on this machine.'
+    })
+    fake.refuse.integrations = true
+    const set = await post('/integrations/jev/key', { apiKey: KEY })
+    expect(set.status).toBe(422)
+    expect(await set.json()).toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'integrations'
+    })
+    expect((await post('/integrations/jev/remove', {})).status).toBe(422)
     expect(fake.secrets).toEqual([])
   })
 })

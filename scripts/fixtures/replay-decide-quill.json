@@ -1,0 +1,37 @@
+{
+  "workspaceRoot": "/w",
+  "home": "/home/ada",
+  "tab": {
+    "firstMessage": "In the Quill editor, pasting a table from a spreadsheet loses its header row. Find where the paste is parsed in quill-web and fix it, with a test.",
+    "latestMessages": [
+      "Run the paste tests again.",
+      "Now check the same paste in the comments box.",
+      "Commit it."
+    ],
+    "touched": {
+      "/w/labs/quill/quill-web/src/paste/table.ts": 7,
+      "/w/labs/quill/quill-web/src/paste/table.test.ts": 4,
+      "/w/labs/quill/quill-web/src/comments/box.tsx": 2
+    }
+  },
+  "options": [
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Quill",
+      "folder": "labs/quill",
+      "description": "Quill, a collaborative document editor: the web app (quill-web) and its API (quill-api)."
+    },
+    {
+      "file": "/w/.clave/workspaces/default.clave",
+      "name": "Atlas",
+      "folder": "labs/atlas",
+      "description": "Atlas, the map tiles service and its public viewer."
+    },
+    {
+      "file": "/w/studio/lumen/.clave/workspaces/default.clave",
+      "name": "Lumen",
+      "folder": "studio/lumen",
+      "description": "Lumen, a marketing site built for a client: the pages, the CMS and its deploys."
+    }
+  ]
+}

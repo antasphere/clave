@@ -8,20 +8,46 @@ import {
   parseDevLine,
   type ChildLike,
   type ProcessLike,
-  type SpawnLike
+  type SpawnLike,
+  type ViewerCommand
 } from './viewer'
 
 /**
- * The viewer manager on a fake `spawn`: the argument list and the environment it gives the
- * CLI, the port it reads from the CLI's JSON line and keeps, a binary not found, a start that
- * fails, a saved port taken, an exit after the start and the restart that follows, and stop.
+ * The viewer manager on a fake `spawn`: the command it is given run as given (the Node, the
+ * preview host and the copy before its own arguments, the command's environment), its input
+ * held open and never written, the port it reads from the JSON line and keeps, no copy to run,
+ * a start that fails, a saved port taken, an exit after the start and the restart that
+ * follows, and stop.
  */
 
+/** Clave's own copy as a caller hands it: its Node, the preview host and the copy's script. */
+const COMMAND: ViewerCommand = {
+  file: '/Applications/Clave.app/Contents/MacOS/Clave',
+  args: ['/data/slideless/preview-host.mjs', '/data/slideless/cli/0.15.0/bin.js'],
+  env: { PATH: '/usr/bin:/bin', HOME: '/Users/x', ELECTRON_RUN_AS_NODE: '1' }
+}
+
+/** The child's input: what the viewer writes on it, and whether it ends it. */
+class FakeStdin extends EventEmitter {
+  written: unknown[] = []
+  ended = false
+  write(chunk: unknown): boolean {
+    this.written.push(chunk)
+    return true
+  }
+  end(): this {
+    this.ended = true
+    return this
+  }
+}
+
 class FakeChild extends EventEmitter implements ChildLike {
+  readonly stdin = new FakeStdin()
   readonly stdout = new EventEmitter()
   readonly stderr = new EventEmitter()
   killed: NodeJS.Signals[] = []
   constructor(
+    readonly file: string,
     readonly args: string[],
     readonly env: Record<string, string>
   ) {
@@ -58,19 +84,20 @@ function harness(): {
   children: FakeChild[]
   logs: string[]
   ports: number[]
-  forgotten: number
   proc: FakeProcess
-  make: (savedPort: number | null) => Viewer
+  make: (
+    savedPort: number | null,
+    command?: () => Promise<ViewerCommand | { missing: string }>
+  ) => Viewer
 } {
   const children: FakeChild[] = []
   const logs: string[] = []
   const ports: number[] = []
   const proc = new FakeProcess()
-  const state = { forgotten: 0 }
   const spawn: SpawnLike = (file, args, options) => {
-    expect(file).toBe('slideless')
-    expect(options.stdio).toEqual(['ignore', 'pipe', 'pipe'])
-    const child = new FakeChild(args, options.env)
+    // Every stream a pipe: the input is the preview host's lifeline to this process.
+    expect(options.stdio).toEqual(['pipe', 'pipe', 'pipe'])
+    const child = new FakeChild(file, args, options.env)
     children.push(child)
     return child
   }
@@ -79,27 +106,27 @@ function harness(): {
     children,
     logs,
     ports,
-    get forgotten(): number {
-      return state.forgotten
-    },
     proc,
-    make: (savedPort) =>
+    make: (savedPort, command = async () => COMMAND) =>
       new Viewer({
         root: '/data/decks',
         proc,
         savedPort,
         onPort: (port) => ports.push(port),
-        env: async () => ({ PATH: '/login/bin:/own/bin', HOME: '/Users/x' }),
+        command,
         spawn,
-        forget: () => state.forgotten++,
         log: (level, message) => logs.push(`${level}: ${message}`),
         backoffMs: [5, 10],
+        missingRetryMs: 30,
         startTimeoutMs: 200
       })
   }
 }
 
 const tick = (ms = 1): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** The viewer's own arguments, after the command's. */
+const ownArgs = (child: FakeChild): string[] => child.args.slice(COMMAND.args.length)
 
 describe("the viewer's arguments", () => {
   it('spawns the CLI as an argument list: dev, the root, the port, no browser, JSON out', () => {
@@ -127,7 +154,7 @@ describe("the viewer's arguments", () => {
 })
 
 describe('Viewer', () => {
-  it('starts the CLI on the saved port with the login environment, and is up on the port it answers', async () => {
+  it('runs the command as given, its own arguments after the host and the copy, on the saved port, and is up on the port it answers', async () => {
     const h = harness()
     const viewer = h.make(4173)
     expect(viewer.state).toEqual({ kind: 'stopped' })
@@ -136,8 +163,9 @@ describe('Viewer', () => {
     expect(viewer.state).toEqual({ kind: 'starting' })
     expect(viewer.note()).toBe(NOTES.starting)
     expect(h.children).toHaveLength(1)
-    expect(h.children[0]!.args).toEqual(devArgs('/data/decks', 4173))
-    expect(h.children[0]!.env).toEqual({ PATH: '/login/bin:/own/bin', HOME: '/Users/x' })
+    expect(h.children[0]!.file).toBe(COMMAND.file)
+    expect(h.children[0]!.args).toEqual([...COMMAND.args, ...devArgs('/data/decks', 4173)])
+    expect(h.children[0]!.env).toEqual(COMMAND.env)
     h.children[0]!.up(4173)
     expect(await started).toEqual({ kind: 'up', url: 'http://127.0.0.1:4173', port: 4173 })
     expect(viewer.url()).toBe('http://127.0.0.1:4173')
@@ -170,29 +198,149 @@ describe('Viewer', () => {
     const viewer = h.make(null)
     const started = viewer.start()
     await tick()
-    expect(h.children[0]!.args).toEqual(devArgs('/data/decks', 0))
+    expect(ownArgs(h.children[0]!)).toEqual(devArgs('/data/decks', 0))
     h.children[0]!.up(54321)
     expect(await started).toMatchObject({ kind: 'up', port: 54321 })
     expect(h.ports).toEqual([54321])
     await viewer.stop()
   })
 
-  it('leaves no viewer when the binary is not found, and forgets the login environment', async () => {
+  it('holds the child’s input open: never written, never ended while it runs, its errors kept off the process', async () => {
     const h = harness()
+    const viewer = h.make(null)
+    const started = viewer.start()
+    await tick()
+    const child = h.children[0]!
+    // Something listens for an error on the input, so one never throws in this process.
+    expect(child.stdin.listenerCount('error')).toBe(1)
+    child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    child.up(5009)
+    await started
+    // Up, then through a restart: the input of each child is left as it was given.
+    child.emit('exit', 1, null)
+    await tick(20)
+    h.children[1]!.up(5009)
+    expect(await viewer.ready(50)).toMatchObject({ kind: 'up', port: 5009 })
+    for (const each of h.children) {
+      expect(each.stdin.written).toEqual([])
+      expect(each.stdin.ended).toBe(false)
+    }
+    await viewer.stop()
+  })
+
+  it('leaves no viewer when there is no copy to run, its note the command’s sentence, nothing spawned', async () => {
+    const h = harness()
+    const viewer = h.make(null, async () => ({ missing: NOTES.missing }))
+    expect(await viewer.start()).toEqual({ kind: 'missing', note: NOTES.missing })
+    expect(viewer.url()).toBeNull()
+    expect(viewer.note()).toBe(NOTES.missing)
+    expect(h.children).toHaveLength(0)
+    expect(h.logs).toEqual([`warn: ${NOTES.missing}`])
+    // Another caller's sentence is the note as given.
+    const other = h.make(null, async () => ({ missing: 'No copy here' }))
+    expect(await other.start()).toEqual({ kind: 'missing', note: 'No copy here' })
+    expect(other.note()).toBe('No copy here')
+    await viewer.stop()
+    await other.stop()
+  })
+
+  it('looks again for a copy found missing, says so once, and runs it once installed, with no new start', async () => {
+    const h = harness()
+    let installed = false
+    let asked = 0
+    const viewer = h.make(null, async () => {
+      asked++
+      return installed ? COMMAND : { missing: NOTES.missing }
+    })
+    expect(await viewer.start()).toMatchObject({ kind: 'missing' })
+    await tick(45)
+    expect(asked).toBe(2)
+    expect(viewer.state).toMatchObject({ kind: 'missing' })
+    expect(h.logs.filter((line) => line.includes(NOTES.missing))).toHaveLength(1)
+    installed = true
+    await tick(45)
+    expect(asked).toBe(3)
+    expect(h.children).toHaveLength(1)
+    h.children[0]!.up(5020)
+    expect(await viewer.ready(100)).toMatchObject({ kind: 'up', port: 5020 })
+    await viewer.stop()
+    // Stopped: no look after it.
+    const stopped = h.make(null, async () => {
+      asked++
+      return { missing: NOTES.missing }
+    })
+    await stopped.start()
+    const before = asked
+    await stopped.stop()
+    await tick(80)
+    expect(asked).toBe(before)
+  })
+
+  it('asks for the command again at every start: a copy installed since is the one the next start runs', async () => {
+    const h = harness()
+    let installed = false
+    let asked = 0
+    const viewer = h.make(null, async () => {
+      asked++
+      return installed ? COMMAND : { missing: NOTES.missing }
+    })
+    expect(await viewer.start()).toMatchObject({ kind: 'missing' })
+    installed = true
+    await viewer.stop()
+    const again = viewer.start()
+    await tick()
+    expect(asked).toBe(2)
+    expect(h.children).toHaveLength(1)
+    expect(h.children[0]!.file).toBe(COMMAND.file)
+    h.children[0]!.up(5010)
+    expect(await again).toMatchObject({ kind: 'up', port: 5010 })
+    // A restart after an exit asks once more.
+    h.children[0]!.emit('exit', 1, null)
+    await tick(20)
+    expect(asked).toBe(3)
+    expect(h.children).toHaveLength(2)
+    await viewer.stop()
+  })
+
+  it('says why when the command cannot be made, or the Node cannot be started', async () => {
+    const h = harness()
+    const broken = h.make(null, async () => {
+      throw new Error('EACCES: permission denied, open preview-host.mjs\n  at x')
+    })
+    expect(await broken.start()).toEqual({
+      kind: 'failed',
+      reason: 'EACCES: permission denied, open preview-host.mjs'
+    })
+    expect(h.children).toHaveLength(0)
+    // The Node not found: a start that failed, not a copy missing.
     const viewer = h.make(null)
     const started = viewer.start()
     await tick()
     h.children[0]!.emit(
       'error',
-      Object.assign(new Error('spawn slideless ENOENT'), { code: 'ENOENT' })
+      Object.assign(new Error(`spawn ${COMMAND.file} ENOENT`), { code: 'ENOENT' })
     )
-    expect(await started).toEqual({ kind: 'missing' })
-    expect(viewer.url()).toBeNull()
-    expect(viewer.note()).toBe(NOTES.missing)
-    expect(h.forgotten).toBe(1)
-    expect(h.children).toHaveLength(1)
-    expect(h.logs).toEqual([`warn: ${NOTES.missing}`])
+    expect(await started).toEqual({ kind: 'failed', reason: `spawn ${COMMAND.file} ENOENT` })
+    expect(viewer.note()).toBe(NOTES.failed(`spawn ${COMMAND.file} ENOENT`))
+    // A spawn that throws is a failed start too, never a start that rejects.
+    const throwing = new Viewer({
+      root: '/data/decks',
+      proc: h.proc,
+      savedPort: null,
+      command: async () => COMMAND,
+      spawn: () => {
+        throw new TypeError('The argument "file" cannot be empty')
+      },
+      backoffMs: [5],
+      startTimeoutMs: 200
+    })
+    expect(await throwing.start()).toEqual({
+      kind: 'failed',
+      reason: 'TypeError: The argument "file" cannot be empty'
+    })
+    await broken.stop()
     await viewer.stop()
+    await throwing.stop()
   })
 
   it("says why a start failed, from the CLI's first line", async () => {
@@ -204,7 +352,6 @@ describe('Viewer', () => {
     h.children[0]!.emit('exit', 1, null)
     expect(await started).toEqual({ kind: 'failed', reason: 'Error: No HTML entry found' })
     expect(viewer.note()).toBe(NOTES.failed('Error: No HTML entry found'))
-    expect(h.forgotten).toBe(0)
     const silent = h.make(null)
     const again = silent.start()
     await tick()
@@ -226,7 +373,7 @@ describe('Viewer', () => {
     h.children[0]!.emit('exit', 1, null)
     await tick()
     expect(h.children).toHaveLength(2)
-    expect(h.children[1]!.args).toEqual(devArgs('/data/decks', 0))
+    expect(ownArgs(h.children[1]!)).toEqual(devArgs('/data/decks', 0))
     h.children[1]!.up(4180)
     expect(await started).toMatchObject({ kind: 'up', port: 4180 })
     expect(h.ports).toEqual([4180])
@@ -258,7 +405,7 @@ describe('Viewer', () => {
     )
     await tick(20)
     expect(h.children).toHaveLength(2)
-    expect(h.children[1]!.args).toEqual(devArgs('/data/decks', 5000))
+    expect(ownArgs(h.children[1]!)).toEqual(devArgs('/data/decks', 5000))
     h.children[1]!.up(5000)
     expect(await viewer.ready(50)).toMatchObject({ kind: 'up', port: 5000 })
     h.children[1]!.emit('exit', null, 'SIGKILL')
@@ -328,7 +475,7 @@ describe('Viewer', () => {
       root: '/data/decks',
       proc: h.proc,
       savedPort: null,
-      env: async () => ({}),
+      command: async () => COMMAND,
       spawn: h.spawn,
       log: (level, message) => h.logs.push(`${level}: ${message}`),
       backoffMs: [5, 10, 20],
@@ -402,7 +549,7 @@ describe('Viewer', () => {
   it('names the footer lines', () => {
     expect(VIEWER_NOTE).toBe('Served by the Slideless viewer on this Mac')
     expect(NOTES.missing).toBe(
-      "The Slideless CLI is not on the login shell's path: run team tools install slideless to see this page through its viewer"
+      "Clave's Slideless is not installed on this machine yet: Settings › Software Update installs it"
     )
   })
 })

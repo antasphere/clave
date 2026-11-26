@@ -26,6 +26,24 @@ export interface LayoutSlice<G extends LayoutGroupLike> {
 export type LayoutKey = string | null
 
 /**
+ * Clave's own name yields (PRDCT-5179). A name a person or an agent gave is
+ * theirs for good, and Clave's naming never overwrites it: wherever a
+ * window's group is laid over the server's group of the same id, when the
+ * window's still carries `autoNamed` (its name is Clave's) and the server's
+ * does not (somebody named it meanwhile), the server's name and the absence
+ * of the flag win, whatever else the window's group carries. `laid` is what
+ * the merge keeps otherwise, and comes back as it is in every other case.
+ */
+function claveNameYields<G extends LayoutGroupLike>(laid: G, mine: G, theirs: G): G {
+  const claveNamed = (g: G): boolean => (g as { autoNamed?: unknown }).autoNamed === true
+  if (!claveNamed(mine) || claveNamed(theirs)) return laid
+  const { autoNamed: _clave, ...rest } = laid as G & { autoNamed?: unknown }
+  void _clave
+  const name = (theirs as { name?: unknown }).name
+  return (typeof name === 'string' ? { ...rest, name } : rest) as unknown as G
+}
+
+/**
  * Replace the partitions of `keys` in the store with `persisted` (those
  * workspaces' layouts as read from their files), pruned to `surviving`
  * sessions, and leave every other workspace's groups and order untouched.
@@ -76,8 +94,16 @@ export function mergeLayoutForKeys<G extends LayoutGroupLike>(
   const sessionKey = new Map<string, LayoutKey>()
   for (const s of state.sessions) sessionKey.set(s.id, s.workspaceId ?? null)
 
-  // Everything of OTHER workspaces stays exactly where it is.
-  const others = state.groups.filter((g) => !ownsGroup(g))
+  // Everything of OTHER workspaces stays exactly where it is. A live group
+  // the file also holds is laid over the file's copy (below): Clave's own
+  // name on it yields to a name the file's copy was given.
+  const saved = new Map((persisted.groups ?? []).map((g) => [g.id, g]))
+  const others = state.groups
+    .filter((g) => !ownsGroup(g))
+    .map((g) => {
+      const theirs = saved.get(g.id)
+      return theirs ? claveNameYields(g, g, theirs) : g
+    })
   const otherGroupIds = new Set(others.map((g) => g.id))
 
   const kept: G[] = []
@@ -86,7 +112,8 @@ export function mergeLayoutForKeys<G extends LayoutGroupLike>(
     // window's workspace file (partitionSidebarLayout's fallback) yet stays in
     // `others` on a take (ownership is by explicit stamp), so the file's copy
     // would otherwise come back beside the live one — two groups with one id,
-    // and every by-id lookup editing the wrong half. The live copy wins.
+    // and every by-id lookup editing the wrong half. The live copy wins, save
+    // for Clave's own name (`claveNameYields`).
     if (otherGroupIds.has(g.id)) continue
     const sessionIds = (g.sessionIds ?? []).filter((sid) => alive.has(sid))
     const terminals = (g.terminals ?? []).map((t) =>
@@ -261,6 +288,8 @@ export function pruneUnknownSessions<G extends LayoutGroupLike>(
 
 export interface MergeGroupLike extends LayoutGroupLike {
   name: string
+  /** Named by Clave (PRDCT-5179): its name yields (`claveNameYields`). */
+  autoNamed?: boolean
 }
 
 export interface MergeResult<G extends MergeGroupLike> {
@@ -332,6 +361,11 @@ function mergeGroup<G extends MergeGroupLike>(was: G, mine: G, theirs: G): G {
  *     window only let members go (a tab moved or closed), which is no edit;
  *   - a group the window left alone is the server's, gone if the server
  *     removed it;
+ *   - wherever the window's group is laid over the server's of the same id
+ *     (one the window added that the server holds too, one the window
+ *     changed), Clave's own name yields: when the window's carries
+ *     `autoNamed` and the server's does not, the server's name and the
+ *     absence of the flag win (`claveNameYields`, PRDCT-5179);
  *   - the order is the server's; the window's additions enter after their
  *     local predecessor; the window's removals leave; when the window
  *     REORDERED (its order of the entries both knew differs from base's),
@@ -355,8 +389,10 @@ export function mergeLayouts<G extends MergeGroupLike>(
     const mine = localGroups.get(g.id)
     if (was && !mine) continue // the window removed it
     if (mine && !was)
-      groups.push(mine) // the window added it; the server has one too: the window's
-    else if (mine && was && !sameJson(mine, was)) groups.push(mergeGroup(was, mine, g))
+      // The window added it; the server has one too: the window's.
+      groups.push(claveNameYields(mine, mine, g))
+    else if (mine && was && !sameJson(mine, was))
+      groups.push(claveNameYields(mergeGroup(was, mine, g), mine, g))
     else groups.push(g)
     placedGroup.add(g.id)
   }

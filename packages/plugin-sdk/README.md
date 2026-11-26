@@ -101,8 +101,12 @@ provider resumes the conversation by, `null` for a plain terminal), `name` (the 
 `working`, `blocked`, `done`, `ended`), `group` (`{ id, name }` of the sidebar group holding the
 tab, `null` when it is ungrouped), `workspaceId` and `createdAt`. All of it under `sessions.read`.
 A plugin's process also receives `CLAVE_PLUGIN_DATA_DIR`, a folder of its own under the plugin
-root, created by the host, for whatever must survive a restart (a ledger, a saved port); nothing
-else of the host's environment reaches it.
+root, created by the host, for whatever must survive a restart (a ledger, a saved port), and
+where the server's own copy of Slideless is: `CLAVE_SLIDELESS_NODE` (the Node that runs it),
+`CLAVE_SLIDELESS_HOST` (the preview host it runs under, written before the plugin starts),
+`CLAVE_SLIDELESS_CLI_DIR` (the folder it is installed in) and `CLAVE_SLIDELESS_CLI` when the
+host's own environment names a copy to run instead; nothing else of the host's environment
+reaches it.
 
 `sessions.focused()` resolves to the session the user is looking at, or `null`; the host
 also pushes it unasked as a `context.changed` notification whenever it changes, delivered

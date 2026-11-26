@@ -1,5 +1,4 @@
 import { lazySettingsPorts, type SettingsPorts } from '../ports/registry'
-import { readJson, writeJson } from '../ports/storage'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import {
   DEFAULT_ELEVENLABS_MODEL,
@@ -9,6 +8,12 @@ import {
   type ElevenLabsStatus,
   type ElevenLabsVoice
 } from '../../shared/elevenlabs'
+import {
+  INTEGRATIONS_FILE,
+  readIntegrationEntry,
+  serialIntegrations,
+  writeIntegrationEntry
+} from './document'
 
 /**
  * The ElevenLabs integration of a machine (PRDCT-4410): ONE API key, sealed
@@ -20,14 +25,16 @@ import {
  * when the server runs in-process, the standalone server on a saved server).
  *
  * The owner keeps one JSON document under its settings ports
- * (`integrations.json`), read at every call. The document holds the SEALED
+ * (`integrations.json`), read at every call, and shared with the Jev key
+ * (`jev.ts`): it is read and written through `document.ts` alone, so a write
+ * of one never erases the other's entry. The document holds the SEALED
  * handle the secret port answered (an OS ciphertext in the app, a Keychain
  * handle on the standalone server), never the key: the key is in no
  * document, no log, no event and no read model. It is opened only for a
  * caller of this process (`openKey`, the speech route).
  */
 
-export const INTEGRATIONS_FILE = 'integrations.json'
+export { INTEGRATIONS_FILE }
 export type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
 
 /** The ways a call to ElevenLabs fails, in the person's words. None carries
@@ -255,10 +262,6 @@ export class ElevenLabsIntegration {
   private readonly listeners = new Set<(status: ElevenLabsStatus) => void>()
   private readonly baseUrl: () => string
   private readonly now: () => number
-  /** The writes, one after the other: a write never interleaves with
-   *  another's load and save in this process. */
-  private writes: Promise<unknown> = Promise.resolve()
-
   constructor(
     private readonly ports: SettingsPorts = lazySettingsPorts,
     options: ElevenLabsIntegrationOptions = {}
@@ -268,15 +271,13 @@ export class ElevenLabsIntegration {
   }
 
   private load(): StoredDocument {
-    const raw = readJson(this.ports.storage, INTEGRATIONS_FILE)
-    const record =
-      raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
-    const elevenLabs = readEntry(record.elevenLabs)
+    const elevenLabs = readEntry(readIntegrationEntry(this.ports, 'elevenLabs'))
     return { version: 1, ...(elevenLabs && { elevenLabs }) }
   }
 
+  /** Writes this store's entry alone: the Jev key beside it stays as it is. */
   private save(document: StoredDocument): ElevenLabsStatus {
-    writeJson(this.ports.storage, INTEGRATIONS_FILE, document)
+    writeIntegrationEntry(this.ports, 'elevenLabs', document.elevenLabs)
     const status = statusOf(document.elevenLabs)
     for (const listener of [...this.listeners]) {
       try {
@@ -288,11 +289,10 @@ export class ElevenLabsIntegration {
     return status
   }
 
-  /** Run a write after every write before it, whatever became of them. */
+  /** Run a write after every write before it, whatever became of them,
+   *  the Jev key's included (`serialIntegrations`). */
   private serial<T>(write: () => T | Promise<T>): Promise<T> {
-    const run = this.writes.then(write, write)
-    this.writes = run.catch(() => undefined)
-    return run
+    return serialIntegrations(write)
   }
 
   /** Every change, after the write, with the status (never the key). */

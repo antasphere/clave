@@ -6,15 +6,27 @@
  */
 import { ApiGroup, HttpCqrs } from '@structure-ai/http'
 import {
+  AddSlidelessSite,
+  AnswerSlidelessSignIn,
+  CancelSlidelessSignIn,
+  CheckSlidelessAccounts,
   CloseArtefact,
+  GetArtefactDeck,
   GetSlidelessState,
   HoldArtefactPreview,
   InstallSlideless,
   ListArtefacts,
   ListArtefactVersions,
+  ListSlidelessAccounts,
   OpenArtefact,
+  PasteSlidelessKey,
   ReleaseArtefactPreview,
-  SaveArtefactVersion
+  RevokeArtefactLink,
+  RunSlidelessFix,
+  SaveArtefactVersion,
+  SetNewLinksSite,
+  ShareArtefact,
+  StartSlidelessSignIn
 } from './artefacts/model'
 
 export * from './artefacts/model'
@@ -31,3 +43,71 @@ export const artefactsGroup = ApiGroup.make('artefacts')
   .add(
     HttpCqrs.commandEndpoint('installSlideless', '/artefacts/slideless/install', InstallSlideless)
   )
+  // ── PRDCT-4266: the Slideless accounts of the server's machine ──
+  .add(
+    HttpCqrs.queryEndpoint(
+      'slidelessAccounts',
+      '/artefacts/slideless/accounts',
+      ListSlidelessAccounts
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'checkSlidelessAccounts',
+      '/artefacts/slideless/accounts/check',
+      CheckSlidelessAccounts
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'addSlidelessSite',
+      '/artefacts/slideless/accounts/sites',
+      AddSlidelessSite
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'setNewLinksSite',
+      '/artefacts/slideless/accounts/new-links-site',
+      SetNewLinksSite
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'runSlidelessFix',
+      '/artefacts/slideless/accounts/fix',
+      RunSlidelessFix
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'startSlidelessSignIn',
+      '/artefacts/slideless/accounts/sign-in',
+      StartSlidelessSignIn
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'answerSlidelessSignIn',
+      '/artefacts/slideless/accounts/sign-in/answer',
+      AnswerSlidelessSignIn
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'cancelSlidelessSignIn',
+      '/artefacts/slideless/accounts/sign-in/cancel',
+      CancelSlidelessSignIn
+    )
+  )
+  .add(
+    HttpCqrs.commandEndpoint(
+      'pasteSlidelessKey',
+      '/artefacts/slideless/accounts/key',
+      PasteSlidelessKey
+    )
+  )
+  // ── PRDCT-4266: an artefact's deck and its links ──
+  .add(HttpCqrs.queryEndpoint('artefactDeck', '/artefacts/deck', GetArtefactDeck))
+  .add(HttpCqrs.commandEndpoint('shareArtefact', '/artefacts/deck/share', ShareArtefact))
+  .add(HttpCqrs.commandEndpoint('revokeArtefactLink', '/artefacts/deck/revoke', RevokeArtefactLink))

@@ -8,6 +8,7 @@
  * The key itself appears in none of these shapes: a machine says whether it
  * holds one, never what it is.
  */
+import type { JevStatus } from './jev'
 
 /** The two models the agents' speech may run on. */
 export type ElevenLabsModelId = 'eleven_flash_v2_5' | 'eleven_multilingual_v2'
@@ -73,6 +74,8 @@ export const ELEVENLABS_REFUSED_PREFIX = 'ElevenLabs refused the key: '
 /** Every integration a machine holds; one today. */
 export interface IntegrationsStatus {
   elevenLabs: ElevenLabsStatus
+  /** The Jev key (PRDCT-5179); absent from a server released before it. */
+  jev?: JevStatus
 }
 
 /** What a server released before the integrations is said to need. The

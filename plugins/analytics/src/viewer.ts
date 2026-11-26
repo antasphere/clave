@@ -1,26 +1,27 @@
 import { spawn as nodeSpawn } from 'node:child_process'
-import { cachedLoginEnv, forgetLoginEnv } from './login-env'
 
 /**
- * The viewer: one `slideless dev` child per plugin process over the decks root, the
- * Slideless CLI's own local server (every file under the root served on loopback, a reload
- * snippet in every page it serves, a reload broadcast when anything under the root
- * changes, the viewer's sandbox headers). It is spawned as an argument list with the login
- * shell's environment (the CLI a version manager installed is found that way), its port
- * read from the CLI's own `--json` line and kept in `server.json` so the next start asks
- * for the same one, its exit noticed and the child started again with a backoff, and it is
- * stopped at `deactivate`. A binary not found, or a start that fails, leaves no viewer: the
- * pages are then the plugin's own, served as before, with one line saying so.
+ * The viewer: one `slideless dev` child per process over a decks root, the Slideless command
+ * line's own local server (every file under the root served on loopback, a reload snippet in
+ * every page it serves, a reload broadcast when anything under the root changes, the
+ * viewer's sandbox headers). What runs is the server's OWN copy of Slideless (PRDCT-4499),
+ * never a `slideless` found on a path: the caller gives the command (`ViewerOptions.command`:
+ * the Node, the preview host and the copy's script before the viewer's own arguments, and
+ * the environment), asked again at every start, so a copy installed after the process
+ * started is the one its next start runs. The child's input is a pipe held open and never
+ * written: the preview host ends the child when this process's end of that pipe closes,
+ * whatever ended this process. Its port is read from the command line's own `--json` line
+ * and kept so the next start asks for the same one, its exit noticed and the child started
+ * again with a backoff, and it is stopped at `stop`. No copy, or a start that fails, leaves
+ * no viewer: the pages are then the caller's own, served as before, with one line saying so.
  */
-
-export const CLI = 'slideless'
-export const INSTALL_HINT = 'team tools install slideless'
 
 /** The footer's last line on a deck the viewer serves. */
 export const VIEWER_NOTE = 'Served by the Slideless viewer on this Mac'
 /** The footer's last line on the plugin's own page, by what the viewer is doing. */
 export const NOTES = {
-  missing: `The Slideless CLI is not on the login shell's path: run ${INSTALL_HINT} to see this page through its viewer`,
+  missing:
+    "Clave's Slideless is not installed on this machine yet: Settings › Software Update installs it",
   starting: 'The Slideless viewer is starting; the next open shows this page through it',
   failed: (reason: string): string =>
     `The Slideless viewer could not start (${reason}); this page is served by Clave itself`,
@@ -29,6 +30,8 @@ export const NOTES = {
 } as const
 
 const BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]
+/** How long a viewer with no copy to run waits before it looks again. */
+export const MISSING_RETRY_MS = 30_000
 /** A run this long before an exit counts as healthy: the backoff starts over. */
 const HEALTHY_MS = 60_000
 /** The CLI prints its URL within this, or the start failed. */
@@ -37,12 +40,24 @@ const START_TIMEOUT_MS = 20_000
 export type ViewerState =
   | { kind: 'starting' }
   | { kind: 'up'; url: string; port: number }
-  | { kind: 'missing' }
+  /** No copy to run; `note` is the caller's sentence saying so. */
+  | { kind: 'missing'; note: string }
   | { kind: 'failed'; reason: string }
   | { kind: 'stopped' }
 
+/** What one start runs: `file` with `args` and then the viewer's own (`devArgs`), in `env`.
+ *  For Clave's own copy: its Node, `[<preview host>, <the copy's bin.js>]`, and
+ *  `ELECTRON_RUN_AS_NODE` in the environment. */
+export interface ViewerCommand {
+  file: string
+  args: string[]
+  env: Record<string, string>
+}
+
 /** What the viewer needs of a child process; `child_process.spawn` gives it, a test fakes it. */
 export interface ChildLike {
+  /** Held open and never written: the preview host's lifeline to this process. */
+  stdin: { on(event: 'error', listener: (error: Error) => void): unknown } | null
   stdout: { on(event: 'data', listener: (chunk: Buffer | string) => void): unknown } | null
   stderr: { on(event: 'data', listener: (chunk: Buffer | string) => void): unknown } | null
   on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
@@ -52,7 +67,7 @@ export interface ChildLike {
 export type SpawnLike = (
   file: string,
   args: string[],
-  options: { env: Record<string, string>; stdio: ['ignore', 'pipe', 'pipe'] }
+  options: { env: Record<string, string>; stdio: ['pipe', 'pipe', 'pipe'] }
 ) => ChildLike
 
 /** What the viewer needs of its own process, to take the child down with it: `process`
@@ -78,14 +93,15 @@ export interface ViewerOptions {
   savedPort: number | null
   /** Told the port the viewer took, to keep for the next start. */
   onPort?: (port: number) => void
-  /** The environment the CLI runs in; the login shell's by default. */
-  env?: () => Promise<Record<string, string>>
+  /** What a start runs, asked again at every start; `{ missing }` when there is no copy to
+   *  run, the sentence the state's note is. */
+  command: () => Promise<ViewerCommand | { missing: string }>
   spawn?: SpawnLike
-  /** Called when the binary was not found, so the login environment is read again later. */
-  forget?: () => void
   log?: (level: 'info' | 'warn', message: string) => void
   /** The waits between restarts, shortest first; the tests shorten them. */
   backoffMs?: readonly number[]
+  /** How long a viewer with no copy to run waits before it looks again; the tests shorten it. */
+  missingRetryMs?: number
   startTimeoutMs?: number
   now?: () => number
 }
@@ -131,16 +147,20 @@ export class Viewer {
   private failures = 0
   private stopped = false
   private readonly spawn: SpawnLike
-  private readonly env: () => Promise<Record<string, string>>
   private readonly backoff: readonly number[]
   private readonly startTimeout: number
   private readonly now: () => number
   private readonly proc: ProcessLike
   private guard: (() => void) | null = null
 
+  /** A copy found missing is looked for again after this long. */
+  private readonly missingRetry: number
+  /** The missing copy already said in the log. */
+  private missingSaid = false
+
   constructor(private readonly options: ViewerOptions) {
+    this.missingRetry = options.missingRetryMs ?? MISSING_RETRY_MS
     this.spawn = options.spawn ?? (nodeSpawn as unknown as SpawnLike)
-    this.env = options.env ?? (() => cachedLoginEnv())
     this.backoff = options.backoffMs ?? BACKOFF_MS
     this.startTimeout = options.startTimeoutMs ?? START_TIMEOUT_MS
     this.now = options.now ?? ((): number => Date.now())
@@ -186,7 +206,7 @@ export class Viewer {
   /** The footer's line for the plugin's own page, by what the viewer is doing now. */
   note(): string {
     const s = this.current
-    if (s.kind === 'missing') return NOTES.missing
+    if (s.kind === 'missing') return s.note
     if (s.kind === 'failed') return NOTES.failed(s.reason)
     if (s.kind === 'starting') return NOTES.starting
     if (s.kind === 'up') return NOTES.up
@@ -246,39 +266,63 @@ export class Viewer {
 
   private async run(port: number): Promise<ViewerState> {
     this.current = { kind: 'starting' }
-    let env: Record<string, string>
+    // What to run, asked at every start: a copy installed since the last one is used now.
+    let command: ViewerCommand | { missing: string }
     try {
-      env = await this.env()
+      command = await this.options.command()
     } catch (error) {
-      env = {}
-      this.options.log?.('warn', `The login shell gave no environment: ${String(error)}`)
+      if (this.stopped) return this.current
+      return this.failed(firstLine(error instanceof Error ? error.message : String(error)))
     }
     if (this.stopped) return this.current
+    if ('missing' in command) {
+      // Said once, not at every look.
+      if (!this.missingSaid) this.options.log?.('warn', command.missing)
+      this.missingSaid = true
+      this.current = { kind: 'missing', note: command.missing }
+      // Looked for again in a while: the copy a machine installs in the background at its
+      // first boot is used once it is there, with no restart of the server or the plugin.
+      if (!this.restartTimer) {
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null
+          if (this.stopped) return
+          this.attempt = this.run(port)
+        }, this.missingRetry)
+        this.restartTimer.unref?.()
+      }
+      return this.current
+    }
+    this.missingSaid = false
     const startedAt = this.now()
     const outcome = await new Promise<
       | { kind: 'up'; url: string; port: number; child: ChildLike }
-      | { kind: 'missing' }
       | { kind: 'failed'; reason: string; exited: boolean }
     >((resolve) => {
       let settled = false
       let stderr = ''
       let stdout = ''
+      // Declared before `settle`: a spawn that throws settles before the timer is armed.
+      let timer: ReturnType<typeof setTimeout> | null = null
       const settle = (value: Parameters<typeof resolve>[0]): void => {
         if (settled) return
         settled = true
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         resolve(value)
       }
       let child: ChildLike
       try {
-        child = this.spawn(CLI, devArgs(this.options.root, port), {
-          env,
-          stdio: ['ignore', 'pipe', 'pipe']
+        child = this.spawn(command.file, [...command.args, ...devArgs(this.options.root, port)], {
+          env: command.env,
+          // The input is a pipe this process holds open and never writes: when this process
+          // ends, however it ends, the pipe closes and the preview host ends the child.
+          stdio: ['pipe', 'pipe', 'pipe']
         })
       } catch (error) {
         return settle({ kind: 'failed', reason: firstLine(String(error)), exited: true })
       }
-      const timer = setTimeout(() => {
+      // Nothing is ever written on it: an error there (the child gone) is not this process's.
+      child.stdin?.on('error', () => {})
+      timer = setTimeout(() => {
         child.kill('SIGKILL')
         settle({ kind: 'failed', reason: 'it did not answer within 20 seconds', exited: false })
       }, this.startTimeout)
@@ -295,9 +339,9 @@ export class Viewer {
       child.stderr?.on('data', (chunk) => {
         stderr += chunk.toString()
       })
+      // The Node not found is a start that failed: the copy itself was looked for already.
       child.on('error', (error) => {
-        if (error.code === 'ENOENT') settle({ kind: 'missing' })
-        else settle({ kind: 'failed', reason: firstLine(error.message), exited: true })
+        settle({ kind: 'failed', reason: firstLine(error.message), exited: true })
       })
       child.on('exit', (code, signal) => {
         if (settled) return
@@ -354,12 +398,6 @@ export class Viewer {
       this.options.log?.('info', `The Slideless viewer serves the decks at ${outcome.url}`)
       return this.current
     }
-    if (outcome.kind === 'missing') {
-      ;(this.options.forget ?? forgetLoginEnv)()
-      this.current = { kind: 'missing' }
-      this.options.log?.('warn', NOTES.missing)
-      return this.current
-    }
     // The saved port may be taken by now: once more on any port before giving up.
     if (port !== 0) {
       this.options.log?.(
@@ -368,8 +406,13 @@ export class Viewer {
       )
       return this.run(0)
     }
-    this.current = { kind: 'failed', reason: outcome.reason }
-    this.options.log?.('warn', NOTES.failed(outcome.reason))
+    return this.failed(outcome.reason)
+  }
+
+  /** No viewer: the start failed, and the footer says why. */
+  private failed(reason: string): ViewerState {
+    this.current = { kind: 'failed', reason }
+    this.options.log?.('warn', NOTES.failed(reason))
     return this.current
   }
 

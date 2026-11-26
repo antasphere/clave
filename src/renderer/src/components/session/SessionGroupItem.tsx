@@ -6,6 +6,8 @@ import { Popover, PopoverAnchor, PopoverContent } from '@clave/ui/components'
 import { GroupTerminalsPanel } from './GroupTerminalsPanel'
 import { useInlineEdit } from '../../hooks/use-inline-edit'
 import { FleetGroupBadge } from '../fleet/FleetControls'
+import { sharePercent } from '@clave/contract/tab-projects-rules'
+import { clearGroupSuggestion, useGroupSuggestionsStore } from '../../store/group-suggestions-store'
 
 /** Hover-to-open timing for the terminals panel: a short wait so a cursor
  *  passing over the icon does not pop it, and a longer grace on leave so the
@@ -61,6 +63,10 @@ function SessionGroupItemImpl({
 }: SessionGroupItemProps): React.JSX.Element {
   const toggleGroupCollapsed = useSessionStore((s) => s.toggleGroupCollapsed)
   const renameGroup = useSessionStore((s) => s.renameGroup)
+  // The two nearest projects while Jev hesitates on the group's tabs
+  // (PRDCT-5179), offered only while Clave may still name the group.
+  const suggestion = useGroupSuggestionsStore((s) => s.byGroup[group.id])
+  const nearest = group.autoNamed && suggestion?.length ? suggestion : null
 
   const {
     editing,
@@ -198,8 +204,39 @@ function SessionGroupItemImpl({
             className="flex-1 min-w-0 bg-transparent text-control font-medium text-text-primary outline-none border-none"
           />
         ) : (
-          <span className="flex-1 min-w-0 text-control font-medium truncate" style={labelStyle}>
+          <span
+            className={cn(
+              'min-w-0 text-control font-medium truncate',
+              nearest ? 'flex-initial' : 'flex-1'
+            )}
+            style={labelStyle}
+          >
             {group.name}
+          </span>
+        )}
+        {/* The suggestion: a click names the group after that project, as a
+            person's rename. Never focusable, and the first thing to shrink
+            away in a narrow sidebar, before the name does. */}
+        {nearest && !editing && (
+          <span className="group-suggestions" data-group-suggestions={group.id}>
+            {nearest.map((project) => (
+              <span
+                key={project.name}
+                role="button"
+                tabIndex={-1}
+                className="badge badge-muted"
+                title={`Name this group ${project.name}`}
+                aria-label={`Name this group ${project.name}, ${sharePercent(project.share)}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  renameGroup(group.id, project.name)
+                  clearGroupSuggestion(group.id)
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {project.name} {sharePercent(project.share)}
+              </span>
+            ))}
           </span>
         )}
         {/* Which machine the group's tabs run on, when it is not this Mac (PRDCT-4151). */}

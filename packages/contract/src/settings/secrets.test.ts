@@ -91,13 +91,14 @@ describe('the settings contract keeps secrets off every surface a client reads',
     expect(JSON.stringify(confirm)).not.toContain('secret-state')
   })
 
-  it('only four payloads carry a secret in, and each carries it redacted', () => {
+  it('only five payloads carry a secret in, and each carries it redacted', () => {
     const carrying = definitions.filter((d) =>
       propertyNames(d.payload.ast).some((n) => SECRET_FIELDS.has(n))
     )
     expect(carrying.map((d) => d.tag).sort()).toEqual([
       'SetClaudeAccountToken',
       'SetElevenLabsKey',
+      'SetJevKey',
       // ── Lane B (harness wave): provider connections ──
       'SetProviderConnectionKey',
       'StartCodexApiKeyLogin'
@@ -108,13 +109,22 @@ describe('the settings contract keeps secrets off every surface a client reads',
     })
     expect(String(key.apiKey)).toBe('<redacted>')
     expect(JSON.stringify(key)).not.toContain('xi-contract')
+    // The Jev key (PRDCT-5179): the same road, in redacted, out in nothing.
+    const jev = Schema.decodeUnknownSync(Settings.SetJevKey.payload)({
+      apiKey: 'jev-contract-test-key'
+    })
+    expect(String(jev.apiKey)).toBe('<redacted>')
+    expect(JSON.stringify(jev)).not.toContain('jev-contract')
     for (const definition of [
       Settings.ReadIntegrations,
       Settings.SetElevenLabsKey,
       Settings.CheckElevenLabs,
       Settings.RemoveElevenLabsKey,
       Settings.SetElevenLabsVoice,
-      Settings.ListElevenLabsVoices
+      Settings.ListElevenLabsVoices,
+      Settings.SetJevKey,
+      Settings.CheckJev,
+      Settings.RemoveJevKey
     ])
       expect(propertyNames(definition.success.ast)).not.toContain('sealed')
     const token = Schema.decodeUnknownSync(Settings.SetClaudeAccountToken.payload)({

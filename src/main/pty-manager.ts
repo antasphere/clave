@@ -87,6 +87,7 @@ function permissionDefaultFor(family: LauncherFamily): string | undefined {
     : undefined
 }
 import { sanitizeWork, type WorkAssignment } from '@clave/contract/work-rules'
+import { sanitizeTabProjects, type TabProjects } from '@clave/contract/tab-projects-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
   familyOfOptions,
@@ -118,6 +119,7 @@ import { installE2eHooks } from './sessions/e2e-hooks'
 import { noteSize } from './sessions/terminal-screen'
 import { sessionManager } from './sessions/session-manager'
 import * as titleGenerator from './title-generator'
+import * as decisionRunner from './decisions/runner'
 import * as exchangeDigest from './exchange-digest'
 import { rememberedChatEffort, rememberedChatModel } from './sessions/chat-model-default'
 import { sessionConnectionChanged, sessionModelChanged } from './server/session-events'
@@ -938,6 +940,8 @@ class PtyManager {
       ...(options?.effort !== undefined ? { effort: options.effort } : {}),
       // Which work it does (PRDCT-4123): a restart's, else the record's.
       work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work),
+      // Which projects it works on (PRDCT-5179), the same way.
+      projects: sanitizeTabProjects(options?.projects) ?? sanitizeTabProjects(previous?.projects),
       // The writing style the agent was given (PRDCT-5166), by its id, so the
       // tab keeps it at every later launch; nothing for a tab given none.
       ...(options?.writingStyle && options.writingStyleText
@@ -1336,6 +1340,9 @@ class PtyManager {
       // them, and a change of work since (a handover accepted, a lane left)
       // wrote the record alone, so a second restart would bring the old back.
       work: ptyBackend.getSessionRecord(id)?.work,
+      // Which projects it works on (PRDCT-5179): the record's, for the same
+      // reason; a reading made since the spawn wrote the record alone.
+      projects: ptyBackend.getSessionRecord(id)?.projects,
       // The writing style it was given (PRDCT-5166), read now for the same
       // reason; the spawn applies it again, never the machine's default.
       writingStyle: record ? record.writingStyle : previous.writingStyle,
@@ -1422,6 +1429,9 @@ class PtyManager {
     if (quit) titleGenerator.shutdown()
     else titleGenerator.cancelAll()
     exchangeDigest.cancelAll(quit)
+    // The decisions' requests to Jev go with them (PRDCT-5179), the same way.
+    if (quit) decisionRunner.shutdown()
+    else decisionRunner.cancelAll()
     await Promise.all(sessionManager.list().map((session) => this.kill(session.id, false)))
   }
   getSession(id: string): PtySession | undefined {
@@ -1448,6 +1458,11 @@ class PtyManager {
    *  keeps no record. The host's `changeWork` is the only caller. */
   setSessionWork(id: string, work: WorkAssignment | null): boolean {
     return ptyBackend.setSessionWork(id, work)
+  }
+  /** Which projects the tab works on, on its record (PRDCT-5179); false when
+   *  it keeps no record. The decisions' host is the only caller. */
+  setSessionProjects(id: string, projects: TabProjects | null): boolean {
+    return ptyBackend.setSessionProjects(id, projects)
   }
   /** Every record's work assignment, read without side effects (PRDCT-4123). */
   listWorkAssignments(): ReturnType<typeof ptyBackend.listWorkAssignments> {

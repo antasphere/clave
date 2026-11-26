@@ -21,10 +21,11 @@ import { useNow } from '../../lib/use-now'
 import { QuotaOverview, ToolToggle, type Tool } from '../usage/UsagePanel'
 import type { ServerUsageProvider } from '../../store/server-settings-store'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
-import { HelpersList } from './HelpersSettings'
+import { DecisionsList, HelpersList } from './HelpersSettings'
 import { WritingStylesList } from './WritingStylesSettings'
 import { writingStylesDescription } from '../../store/writing-styles-store'
 import { IntegrationsList } from './IntegrationsSettings'
+import { SlidelessSettings } from './SlidelessSettings'
 import { SettingsPage, SettingsCallout } from './primitives'
 import { ConnectionsBoard } from './AccountsSettings'
 import { ServerClaudeCard } from './ClaudeAccountsSection'
@@ -174,6 +175,9 @@ export function ServerHelpersSettings({ serverId }: { serverId: string }): React
         {page.connected && settings.status !== 'error' && (
           <HelpersList machine={serverId} machineName={name} accounts={settings.claude} />
         )}
+        {page.connected && settings.status !== 'error' && (
+          <DecisionsList machine={serverId} machineName={name} />
+        )}
       </div>
     </SettingsPage>
   )
@@ -222,6 +226,24 @@ export function ServerIntegrationsSettings({ serverId }: { serverId: string }): 
         )}
       </div>
     </SettingsPage>
+  )
+}
+
+// ── Slideless ───────────────────────────────────────────────────────────────
+
+/** The Slideless accounts of a server (PRDCT-4266): listed, checked and
+ *  signed in by the server's own copy of the command, on the server. */
+export function ServerSlidelessSettings({ serverId }: { serverId: string }): ReactElement {
+  const page = useServerPage(serverId)
+  const live = page.connected && page.settings.status !== 'error'
+  return (
+    <div data-server-settings={serverId}>
+      <SlidelessSettings
+        machine={serverId}
+        live={live}
+        notice={<ServerNotice serverId={serverId} {...page} />}
+      />
+    </div>
   )
 }
 
