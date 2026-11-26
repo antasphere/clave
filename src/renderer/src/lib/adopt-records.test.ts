@@ -33,6 +33,8 @@ const spawned: string[] = []
 const spawnOptions = new Map<string, Record<string, unknown>>()
 /** What the by-id records read answers. */
 let byIdRecords: SessionRecord[] = []
+/** What every spawn answers besides its id and folder (PRDCT-5166). */
+let spawnAnswerExtra: Record<string, unknown> = {}
 /** What the kernel's session list answers: id and state. */
 let kernel: { id: string; state: string }[] = []
 /** When set, the kernel's answer waits for the test to release it: the
@@ -81,7 +83,8 @@ beforeAll(async () => {
             folderName: 'w',
             alive: true,
             claudeSessionId: null,
-            piSessionId: null
+            piSessionId: null,
+            ...spawnAnswerExtra
           })
         })
       })
@@ -112,6 +115,7 @@ beforeEach(() => {
   spawnOptions.clear()
   byIdRecords = []
   kernel = []
+  spawnAnswerExtra = {}
   listGate = null
 })
 
@@ -883,6 +887,65 @@ describe('the projects a record carries', () => {
     ]
     await adoptServerStartedSessions(['opened-read'])
     expect(projectsOf('opened-read')).toEqual(projects)
+  })
+})
+
+/**
+ * PRDCT-5166: the writing style a tab's agent was given rides on the tab, so
+ * the window's `clave_list` says it. Each path that builds a tab from a record
+ * must carry it: the restore spawn (from its answer), a record the host runs
+ * and a tab the server opened (from the record).
+ */
+describe('the writing style a record carries', () => {
+  const styleOf = (id: string): string | undefined =>
+    useSessionStore.getState().sessions.find((s) => s.id === id)?.writingStyle
+
+  it('a record the restore spawns is placed with it, then takes the style its spawn applied', async () => {
+    const { attached } = placeRecords(
+      [{ ...record('restored'), writingStyle: 'quiet' } as SessionRecord],
+      null
+    )
+    expect(styleOf('restored')).toBe('quiet')
+    await flush()
+    spawnAnswerExtra = { writingStyle: 'quiet' }
+    pending.get('restored')!(true)
+    expect(await attached).toEqual(['restored'])
+    expect(styleOf('restored')).toBe('quiet')
+  })
+
+  it('a restore whose spawn applied none has none, whatever the record said', async () => {
+    const { attached } = placeRecords(
+      [{ ...record('restored'), writingStyle: 'quiet' } as SessionRecord],
+      null
+    )
+    await flush()
+    pending.get('restored')!(true)
+    expect(await attached).toEqual(['restored'])
+    expect(styleOf('restored')).toBeUndefined()
+  })
+
+  it('a record the host already runs keeps it on the restore', async () => {
+    const running = {
+      ...record('running'),
+      live: true,
+      running: true,
+      writingStyle: 'brief'
+    } as SessionRecord
+    const { attached } = placeRecords([running], null)
+    expect(await attached).toEqual(['running'])
+    expect(spawned).toEqual([])
+    expect(styleOf('running')).toBe('brief')
+  })
+
+  it('a tab the server opened keeps it on the layout path, and one on none has none', async () => {
+    byIdRecords = [
+      { ...record('opened'), live: true, running: true, writingStyle: 'brief' } as SessionRecord,
+      { ...record('plain'), live: true, running: true } as SessionRecord
+    ]
+    await adoptServerStartedSessions(['opened', 'plain'])
+    expect(spawned).toEqual([])
+    expect(styleOf('opened')).toBe('brief')
+    expect(styleOf('plain')).toBeUndefined()
   })
 })
 

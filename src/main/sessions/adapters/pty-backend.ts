@@ -29,8 +29,10 @@ import {
   CLAVE_MCP_CONFIG_FILE_ENV,
   CLAVE_TAB_MCP_TOKEN_ENV,
   readClaveMcpEndpoint,
-  withOpencodeClaveTools
+  withOpencodeClaveTools,
+  withOpencodeInstructions
 } from '../../clave-tools-launch'
+import { appliedStyleFile } from '../../writing-styles/launch'
 import { CLAVE_CONNECTION_REPORT_FILE_ENV, connectionWatchNames } from '../../connection-watch'
 import { isValidModelName } from '../../../shared/model-name'
 import { tmuxKillSessionArgs } from '../../tmux-args'
@@ -44,6 +46,7 @@ import type { NestRecord } from '@clave/contract/nest-rules'
 import type { ContinuedFrom } from '@clave/contract/sessions'
 import {
   buildAgentArgv,
+  withStyleText,
   type AgentKind,
   type LaunchProfile,
   type PiThinkingLevel
@@ -98,9 +101,18 @@ export function piStateExtensionPath(): string {
  * State words written: idle (start), working (prompt/tool activity), blocked
  * (permission/elicitation prompt), done (turn complete), ended (session end).
  * `--settings` merges with (never replaces) the user's own settings.
+ *
+ * `resetOutputStyle` is for a tab with a writing style (PRDCT-5166): the
+ * person's own Claude Code output style is set back to `default` for this
+ * tab alone, so it does not fight the style. Where there are no hooks, the
+ * reset is the whole argument.
  */
-export function buildClaudeHookSettingsArg(claveSessionId: string): string | null {
-  if (isWindows) return null
+export function buildClaudeHookSettingsArg(
+  claveSessionId: string,
+  options?: { resetOutputStyle?: boolean }
+): string | null {
+  const reset = options?.resetOutputStyle === true ? { outputStyle: 'default' } : {}
+  if (isWindows) return options?.resetOutputStyle ? JSON.stringify(reset) : null
   const statePath = stateFilePath(claveSessionId)
   const q = JSON.stringify(statePath) // double-quoted shell token for the path
   // Recreate the parent dir on every write: the hook path is baked in at spawn,
@@ -111,6 +123,7 @@ export function buildClaudeHookSettingsArg(claveSessionId: string): string | nul
     hooks: [{ type: 'command', command: `mkdir -p ${qDir} && printf ${word} > ${q}` }]
   })
   const settings = {
+    ...reset,
     hooks: {
       SessionStart: [write('idle')],
       UserPromptSubmit: [write('working')],
@@ -693,6 +706,12 @@ export interface SessionRecord {
    *  whether it was converted into this provider's storage or carried as a
    *  handoff message. The tab's first card reads it. */
   continuedFrom?: ContinuedFrom
+  /** The id of the writing style the tab was opened with (PRDCT-5166,
+   *  `src/shared/writing-styles.ts`): written at its first launch when a
+   *  style was applied, carried across adoption like the name, and read at
+   *  every later launch of the same tab, so a tab keeps its style. Absent
+   *  for a tab on no style. */
+  writingStyle?: string
   /** Populated only on the listAdoptableSessions() path (not persisted in
    *  the record). True when the backing tmux session is still running (app
    *  quit/reopen, no reboot) → reattach to the live process. False when the
@@ -974,6 +993,16 @@ export interface PtySpawnOptions {
   pluginDir?: string
   /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
   appendSystemPrompt?: string
+  /** The writing style the tab starts with (PRDCT-5166): what the launch
+   *  names (a style's id or exact name, or `none`), or, for a tab launched
+   *  again, the id its record keeps. Absent, the machine's default at a
+   *  first launch. Resolved by the manager's spawn, never by an adapter. */
+  writingStyle?: string
+  /** The resolved style's instructions, main's alone: set by the manager's
+   *  spawn at every spawn (over whatever a caller put here), with
+   *  `writingStyle` then the applied style's id. Each harness is handed it
+   *  its own way; never on the record. */
+  writingStyleText?: string
   /** Opt-in: run this session inside a persistent tmux session. */
   tmuxMode?: boolean
   /** Reattach to this exact existing tmux session instead of deriving a new
@@ -1179,6 +1208,9 @@ export interface PtySession {
   model?: string
   piProvider?: string
   piThinking?: PiThinkingLevel
+  /** The id of the writing style the agent was given at this launch
+   *  (PRDCT-5166), the one its record names; absent for a tab on none. */
+  writingStyle?: string
   /** Set when this session is backed by a tmux session (the tmux session name). */
   tmuxName?: string
   /** When the conversation started (see SessionRecord.startedAt). */
@@ -1281,6 +1313,12 @@ export class PtyBackend {
     let posixAgentCommand: string | undefined
     /** A connection's values under Clave's private names (`connectionHandover`). */
     let handoverEnv: Record<string, string> | undefined
+    // The writing style's text (PRDCT-5166), and whether this launch gave it
+    // to the agent: only then does the record name the style. A Windows
+    // terminal (cmd.exe cannot carry the text safely) and an Antigravity one
+    // (no way in at launch) are given none.
+    const styleText = kind && kind !== 'claude-agents' ? options?.writingStyleText : undefined
+    let styleApplied = false
     if (isWindows) {
       // No connection handover here (`connection-handover.ts` is POSIX only):
       // nothing stops a Windows login profile from replacing a stored key,
@@ -1407,6 +1445,15 @@ export class PtyBackend {
           options = { ...options, providerEnv, opencodeStandalone: true }
         }
         // ── end PRDCT-4507 ──
+        // A writing style (PRDCT-5166) reaches OpenCode as an instruction file
+        // named in the same inline configuration, on the same road as a
+        // connection's (the handover below, the tmux list), read by the
+        // standalone TUI every OpenCode terminal runs.
+        if (kind === 'opencode' && styleText)
+          options = {
+            ...options,
+            providerEnv: withOpencodeInstructions(options?.providerEnv, appliedStyleFile(styleText))
+          }
         const piExtensionPath = kind === 'pi' ? piStateExtensionPath() : undefined
         const argv = buildAgentArgv({
           kind,
@@ -1420,7 +1467,9 @@ export class PtyBackend {
           thinking: piThinking,
           initialPrompt: options?.initialPrompt,
           claudeSettings:
-            kind === 'claude' ? (buildClaudeHookSettingsArg(id) ?? undefined) : undefined,
+            kind === 'claude'
+              ? (buildClaudeHookSettingsArg(id, { resetOutputStyle: !!styleText }) ?? undefined)
+              : undefined,
           mcpConfigPath: mcpConfigPath ?? undefined,
           piStateExtensionPath: piExtensionPath,
           // ── ADR 0004: a routine run's own flags (Claude only) ──
@@ -1431,9 +1480,17 @@ export class PtyBackend {
               : options?.permissionMode,
           antigravityAskSettings: options?.antigravityAskSettings,
           pluginDir: options?.pluginDir,
-          appendSystemPrompt: options?.appendSystemPrompt,
+          // The launch's own line, then the writing style (PRDCT-5166): Claude
+          // and Pi take both through `--append-system-prompt`, Codex the
+          // style as its developer instructions.
+          appendSystemPrompt: withStyleText(
+            options?.appendSystemPrompt,
+            kind === 'claude' || kind === 'pi' ? styleText : undefined
+          ),
+          developerInstructions: kind === 'codex' ? styleText : undefined,
           opencodeStandalone: options?.opencodeStandalone
         })
+        styleApplied = !!styleText && kind !== 'antigravity'
         const assignments = [`CLAVE_SESSION_ID=${shellSingleQuote(id)}`]
         if (kind === 'pi')
           assignments.push(`CLAVE_AGENT_STATE_FILE=${shellSingleQuote(stateFilePath(id))}`)
@@ -1584,7 +1641,10 @@ export class PtyBackend {
       // the record before its kill, else what the record already said.
       work: sanitizeWork(options?.work) ?? sanitizeWork(previous?.work),
       // Which projects it works on (PRDCT-5179), the same way.
-      projects: sanitizeTabProjects(options?.projects) ?? sanitizeTabProjects(previous?.projects)
+      projects: sanitizeTabProjects(options?.projects) ?? sanitizeTabProjects(previous?.projects),
+      // The writing style the agent was given (PRDCT-5166), by its id, so the
+      // tab keeps it at every later launch. Nothing for a tab given none.
+      ...(styleApplied && options?.writingStyle ? { writingStyle: options.writingStyle } : {})
     }
     let recordKey: string | null = null
 
@@ -1670,6 +1730,9 @@ export class PtyBackend {
     if (model) session.model = model
     if (piProvider) session.piProvider = piProvider
     if (piThinking) session.piThinking = piThinking
+    // The style the record names (PRDCT-5166), and on the same condition, so
+    // the spawn's answer and the record never disagree.
+    if (styleApplied && options?.writingStyle) session.writingStyle = options.writingStyle
     if (tmuxName) session.tmuxName = tmuxName
     this.sessions.set(id, session)
     return session

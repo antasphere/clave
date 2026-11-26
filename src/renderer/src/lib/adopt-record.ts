@@ -162,6 +162,7 @@ function settleRestored(spawned: Session): void {
             launchProfileId: spawned.launchProfileId,
             piProvider: spawned.piProvider,
             piThinking: spawned.piThinking,
+            writingStyle: spawned.writingStyle,
             restoring: false
           }
         : s
@@ -264,6 +265,9 @@ function sessionFromRecord(
     work: s.work,
     // Which projects it works on, as Jev last read it (PRDCT-5179).
     projects: s.projects,
+    // The writing style its agent was given (PRDCT-5166): the spawn's word
+    // when this adoption spawned it, else the record's.
+    writingStyle: info ? info.writingStyle : s.writingStyle,
     // A chat that is not running comes back without starting its agent:
     // its pane mounts, and the agent starts, when the tab is first shown.
     ...(s.transport === 'events' && !s.live ? { dormant: true } : {}),
@@ -539,6 +543,8 @@ function sessionOfRecord(s: SessionRecord, workspaceId: string | undefined): Ses
     openedBy: s.openedBy,
     work: s.work,
     projects: s.projects,
+    // The writing style its agent was given (PRDCT-5166).
+    writingStyle: s.writingStyle,
     detectedUrl: null,
     serverStatus: null,
     serverCommand: null,

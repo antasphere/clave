@@ -9,6 +9,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsSection, string>> 
   keymaps: 'Keymaps',
   agents: 'Harnesses',
   helpers: 'Helpers',
+  styles: 'Writing styles',
   integrations: 'Integrations',
   accounts: 'Connections',
   usage: 'Usage',

@@ -577,6 +577,11 @@ export const SpawnOptions = Schema.Struct({
   pluginDir: Schema.optional(Schema.String),
   /** One paragraph appended to Claude's system prompt (`--append-system-prompt`). */
   appendSystemPrompt: Schema.optional(Schema.String),
+  /** The writing style the tab starts with (PRDCT-5166): a style of the
+   *  machine by its id or its exact name, or `none`. Absent, the machine's
+   *  default at a first launch and the record's own for a tab launched again
+   *  (`src/shared/writing-styles.ts`). */
+  writingStyle: Schema.optional(Schema.String.pipe(Schema.maxLength(64))),
   tmuxMode: Schema.optional(Schema.Boolean),
   adoptTmuxName: Schema.optional(Schema.String),
   adoptSessionId: Schema.optional(Schema.String),
@@ -624,7 +629,10 @@ export const SessionInfo = Schema.Struct({
   launchProfileId: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
   piProvider: Schema.optional(Schema.String),
-  piThinking: Schema.optional(Schema.String)
+  piThinking: Schema.optional(Schema.String),
+  /** The id of the writing style the agent was given (PRDCT-5166); absent
+   *  for a tab on none. */
+  writingStyle: Schema.optional(Schema.String)
 })
 export type SessionInfo = typeof SessionInfo.Type
 
@@ -872,6 +880,9 @@ export const SessionRecord = Schema.Struct({
   projects: Schema.optional(TabProjects),
   /** The conversation came from another provider (PRDCT-4300). */
   continuedFrom: Schema.optional(ContinuedFrom),
+  /** The id of the writing style the tab was opened with (PRDCT-5166);
+   *  absent for a tab on no style. */
+  writingStyle: Schema.optional(Schema.String),
   /** Lane D (PRDCT-4427): the OpenCode session a chat tab resumes (PRDCT-4427),
    *  the id `opencode --session` takes in a terminal. */
   opencodeSessionId: Schema.optional(Schema.String),

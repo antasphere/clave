@@ -11,6 +11,7 @@ import type {
   DecisionPreference,
   HelperPreference,
   IntegrationsStatus,
+  WritingStylesView,
   LaunchProfile,
   LaunchProfilePreferences,
   SettingsEvent,
@@ -58,6 +59,21 @@ export class FakeSettingsSource implements SettingsSourceService {
   codex: CodexAccount[] = []
   jobs: AccountLoginJob[] = []
   profiles: LaunchProfilePreferences = emptyProfiles()
+  /** The host's writing styles as the fake holds them (PRDCT-5166). */
+  styles: WritingStylesView = {
+    styles: [
+      {
+        id: 'brief',
+        name: 'Brief',
+        description: 'Short.',
+        text: 'The answer first.',
+        statusCard: true,
+        builtIn: true
+      }
+    ],
+    defaultStyleId: null,
+    claudeOutputStyle: null
+  }
   /** The host's helpers as the fake holds them (PRDCT-4330). */
   helperList: HelperPreference[] = [
     {
@@ -355,6 +371,42 @@ export class FakeSettingsSource implements SettingsSourceService {
         d.id === id ? { ...d, ...(patch.enabled !== undefined && { enabled: patch.enabled }) } : d
       )
       return this.decisionList
+    }
+  }
+  readonly writingStyles: SettingsSourceService['writingStyles'] = {
+    list: () => this.styles,
+    save: (draft) => {
+      this.record('writingStyles.save', draft)
+      if (!draft.name.trim()) throw new Error('A style needs a name.')
+      const style = {
+        id: draft.id ?? draft.name.toLowerCase(),
+        name: draft.name,
+        description: draft.description,
+        text: draft.text,
+        statusCard: draft.statusCard,
+        builtIn: false
+      }
+      this.styles = {
+        ...this.styles,
+        styles: [...this.styles.styles.filter((s) => s.id !== style.id), style]
+      }
+      return this.styles
+    },
+    remove: (id) => {
+      this.record('writingStyles.remove', id)
+      this.styles = { ...this.styles, styles: this.styles.styles.filter((s) => s.id !== id) }
+      return this.styles
+    },
+    setDefault: (id) => {
+      this.record('writingStyles.setDefault', id)
+      if (id !== null && !this.styles.styles.some((s) => s.id === id))
+        throw new Error('This style no longer exists.')
+      this.styles = { ...this.styles, defaultStyleId: id }
+      return this.styles
+    },
+    importClaude: () => {
+      this.record('writingStyles.importClaude')
+      throw new Error('Claude Code has no output style of yours to import.')
     }
   }
   private integrationsHere(): void {

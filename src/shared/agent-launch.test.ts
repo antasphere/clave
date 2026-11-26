@@ -13,9 +13,12 @@ import {
   resolveLaunchProfile,
   sanitizeCarriedLaunchProfile,
   sanitizeLaunchProfilePreferences,
+  tomlBasicString,
+  withStyleText,
   type LaunchProfile,
   type LaunchProfilePreferences
 } from './agent-launch'
+import { BUILT_IN_STYLES, composeStyleText } from './writing-styles'
 
 const prefs: LaunchProfilePreferences = {
   version: 1,
@@ -697,6 +700,129 @@ describe('the permission default reaches the argv (PRDCT-4424)', () => {
 })
 
 // PRDCT-4507: every capture road asks the table, never a list of modes.
+describe('a writing style reaches each harness its own way (PRDCT-5166)', () => {
+  const TITLE = 'tui.terminal_title=["app-name","status","spinner"]'
+  const profileOf = (family: LaunchProfile['family'], command: string): LaunchProfile => ({
+    id: `builtin-${family}`,
+    name: family,
+    family,
+    command: [command],
+    additionalArgs: []
+  })
+  const STYLE = 'Answer first.\nSay "done" when `npm test` passes.'
+
+  it("claude: the style after the launch's own line, in one --append-system-prompt", () => {
+    const own = 'You are a routine run.'
+    expect(withStyleText(own, STYLE)).toBe(`${own}\n\n${STYLE}`)
+    expect(withStyleText(undefined, STYLE)).toBe(STYLE)
+    expect(withStyleText(own, undefined)).toBe(own)
+    expect(withStyleText(undefined, undefined)).toBeUndefined()
+    const argv = buildAgentArgv({
+      kind: 'claude',
+      profile: profileOf('claude', 'claude'),
+      sessionId: 'sid',
+      appendSystemPrompt: withStyleText(own, STYLE)
+    })
+    expect(argv).toEqual([
+      'claude',
+      '--session-id',
+      'sid',
+      '--append-system-prompt',
+      `${own}\n\n${STYLE}`
+    ])
+  })
+
+  it('pi: --append-system-prompt with the text, and nothing without one', () => {
+    const pi = profileOf('pi', 'pi')
+    expect(
+      buildAgentArgv({ kind: 'pi', profile: pi, sessionId: 'sid', appendSystemPrompt: STYLE })
+    ).toEqual(['pi', '--session-id', 'sid', '--append-system-prompt', STYLE])
+    expect(buildAgentArgv({ kind: 'pi', profile: pi, sessionId: 'sid' })).toEqual([
+      'pi',
+      '--session-id',
+      'sid'
+    ])
+  })
+
+  it('codex: developer_instructions as a TOML string, its newline escaped, the thread id still last', () => {
+    const codex = profileOf('codex', 'codex')
+    const config = `developer_instructions=${JSON.stringify(STYLE)}`
+    expect(config).not.toContain('\n')
+    expect(config).toContain('\\n')
+    expect(buildAgentArgv({ kind: 'codex', profile: codex, developerInstructions: STYLE })).toEqual(
+      ['codex', '-c', TITLE, '-c', config]
+    )
+    const resumed = buildAgentArgv({
+      kind: 'codex',
+      profile: codex,
+      resumeSessionId: 'thread-1',
+      developerInstructions: STYLE
+    })
+    expect(resumed).toEqual(['codex', 'resume', '-c', TITLE, '-c', config, 'thread-1'])
+    expect(resumed[resumed.length - 1]).toBe('thread-1')
+  })
+
+  describe('the TOML string Codex reads the instructions as', () => {
+    /** What TOML refuses in a basic string: a raw control character other
+     *  than tab, and an escape of a surrogate, no Unicode scalar value. */
+    const rawControl = (value: string): boolean =>
+      [...value].some((char) => {
+        const code = char.codePointAt(0)!
+        return (code < 0x20 && code !== 0x09) || code === 0x7f
+      })
+    const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F][0-9a-fA-F]{2}/
+    const tomlSafe = (value: string): void => {
+      expect(rawControl(value)).toBe(false)
+      expect(value).not.toMatch(SURROGATE_ESCAPE)
+      expect(value.startsWith('"') && value.endsWith('"')).toBe(true)
+    }
+
+    it('escapes U+007F and puts U+FFFD for a lone surrogate, read back to the text', () => {
+      const text = `Delete\u007Fhere, a lone \uD83D and \uDE00, a pair \uD83D\uDE00, a tab\tand a\nline.`
+      // JSON alone gives TOML what it refuses: that is the case held.
+      expect(rawControl(JSON.stringify(text))).toBe(true)
+      expect(JSON.stringify(text)).toMatch(SURROGATE_ESCAPE)
+      const value = tomlBasicString(text)
+      tomlSafe(value)
+      expect(value).toContain('\\u007F')
+      expect(JSON.parse(value)).toBe(
+        `Delete\u007Fhere, a lone \uFFFD and \uFFFD, a pair \uD83D\uDE00, a tab\tand a\nline.`
+      )
+    })
+
+    it("holds every built-in style's text, read back exactly", () => {
+      for (const style of BUILT_IN_STYLES) {
+        const text = composeStyleText(style)
+        const value = tomlBasicString(text)
+        tomlSafe(value)
+        expect(JSON.parse(value)).toBe(text)
+      }
+    })
+
+    it('is the value on the command line', () => {
+      const text = 'Mark\u007F, half \uD800.'
+      const argv = buildAgentArgv({
+        kind: 'codex',
+        profile: profileOf('codex', 'codex'),
+        developerInstructions: text
+      })
+      expect(argv.at(-1)).toBe(`developer_instructions=${tomlBasicString(text)}`)
+      tomlSafe(argv.at(-1)!.slice('developer_instructions='.length))
+    })
+  })
+
+  it('no flag for any harness without a style', () => {
+    expect(buildAgentArgv({ kind: 'codex', profile: profileOf('codex', 'codex') })).toEqual([
+      'codex',
+      '-c',
+      TITLE
+    ])
+    expect(buildAgentArgv({ kind: 'claude', profile: profileOf('claude', 'claude') })).toEqual([
+      'claude'
+    ])
+  })
+})
+
 describe('capturesExchange', () => {
   it('answers the harness table, aliases included, and never for a terminal or an unknown mode', () => {
     for (const [mode, capability] of Object.entries(AGENT_CAPABILITIES))

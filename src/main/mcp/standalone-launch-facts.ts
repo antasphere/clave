@@ -50,6 +50,7 @@ import { openProfileIdFor, type LaunchFacts } from '../routines/launch'
 import type { AccountProvider, AccountSwitchMode, ServedAccount } from './served-core'
 import { antigravityLaunchModels } from '../../shared/antigravity'
 import { ANTIGRAVITY_LISTING_BUDGET_MS, withinBudget } from '../../shared/within-budget'
+import { writingStylesView } from '../writing-styles/source'
 
 export interface StandaloneLaunchFacts extends LaunchFacts {
   /** This server, as a client names it. */
@@ -276,6 +277,9 @@ export function launchOptionsInput(
             id === 'pi' ? piStarts.get(connectionId) : undefined
         }
       : {}),
+    // This server's writing styles (PRDCT-5166), from the source its spawn
+    // reads too, so the list and the launch never disagree.
+    writingStyles: writingStylesView(),
     now: facts.now()
   }
 }

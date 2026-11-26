@@ -27,6 +27,7 @@ import { shareAGroup } from '../../shared/group-reach'
 import { sanitizeForPaste } from '../../shared/paste-sanitize'
 import { ownSessionRef } from '../../shared/own-session-ref'
 import { buildCheckpointProvenance, buildProvenanceHeader } from '../../shared/exchange-provenance'
+import type { HistoryStatus } from '../../shared/history-text'
 
 /** The host's facts a target needs. */
 export interface TargetHost {
@@ -322,8 +323,16 @@ export async function resumeTarget(
   }
 }
 
-/** The answer of `clave_read_session`, over the lines the host read. */
-export function readAnswer(host: TargetHost, target: Session, lines: readonly string[]): unknown {
+/** The answer of `clave_read_session`, over the lines the host read. A chat's
+ *  read passes the status its agent ended its last turn on (PRDCT-5166), null
+ *  for none; a terminal's passes nothing, and its answer has no `status` key:
+ *  its screen shows the block as the agent wrote it. */
+export function readAnswer(
+  host: TargetHost,
+  target: Session,
+  lines: readonly string[],
+  status?: HistoryStatus | null
+): unknown {
   const kept = [...lines]
   // The TUI viewport is mostly blank padding — drop trailing empty rows.
   while (kept.length && kept[kept.length - 1].trim() === '') kept.pop()
@@ -334,6 +343,7 @@ export function readAnswer(host: TargetHost, target: Session, lines: readonly st
     alive: target.state !== 'ended',
     agentState: agentStateOf(target),
     lines: kept.length,
-    text: kept.join('\n')
+    text: kept.join('\n'),
+    ...(status !== undefined ? { status } : {})
   }
 }

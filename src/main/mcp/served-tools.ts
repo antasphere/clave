@@ -83,6 +83,7 @@ export {
   modeOf,
   resolveGroupRef
 } from './served-core'
+import { listedStyle } from '../../shared/open-session-modes'
 
 // ── The tools ──
 
@@ -411,7 +412,9 @@ async function list(ctx: Ctx, key: string, p: Payload): Promise<unknown> {
       }),
       // The tab it is shown under in the sidebar, as its record keeps it
       // (PRDCT-4997); parentId above is who opened it.
-      nestedUnder: record?.spawnedBy ?? null
+      nestedUnder: record?.spawnedBy ?? null,
+      // The writing style it was opened with (PRDCT-5166); no key for none.
+      ...listedStyle(record?.writingStyle)
     }))
   // The layouts of live windows only: a key the server keeps for a window
   // that is gone is an orphan the primary takes at its next read, and the
@@ -517,6 +520,14 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
   ).catch(() => new Map<string, PiStartModel>())
   // What each connection's tabs used today (PRDCT-4551), as a person reads it.
   const harnessUsage = shell.harnessUsage ? await shell.harnessUsage().catch(() => null) : null
+  // The machine's writing styles (PRDCT-5166), asked of the server that
+  // launches the tab: in a packaged app it is a process apart and main holds
+  // no store of its own. A failure, or an older server that has no such
+  // call, lists no style rather than failing the whole listing.
+  const writingStyles = await Promise.resolve()
+    .then(() => ctx.api.settings.writingStyles.list())
+    .then((view) => ({ styles: [...view.styles], defaultStyleId: view.defaultStyleId }))
+    .catch(() => null)
   return launchOptionsOf({
     harnessUsage,
     machine: shell.machine?.() ?? { id: 'local', name: 'This Mac' },
@@ -561,6 +572,7 @@ async function launchOptions(ctx: Ctx): Promise<LaunchOptions> {
         : undefined,
     providerStartModel: (id, connectionId) =>
       id === 'pi' ? piStarts.get(connectionId) : undefined,
+    writingStyles,
     now: Date.now()
   })
 }

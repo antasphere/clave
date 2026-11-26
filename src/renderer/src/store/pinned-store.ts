@@ -1315,6 +1315,7 @@ async function spawnPinnedGroup(
         launchProfileId: sessionInfo.launchProfileId,
         piProvider: sessionInfo.piProvider,
         piThinking: sessionInfo.piThinking,
+        writingStyle: sessionInfo.writingStyle,
         // Persist so Duplicate can re-prime the clone (see Sidebar duplicate).
         initialPrompt,
         sessionType: 'local',

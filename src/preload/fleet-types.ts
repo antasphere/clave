@@ -21,6 +21,7 @@ import type {
 } from './index.d'
 import type { LaunchProfile, LauncherFamily } from '../shared/agent-launch'
 import type { HelperPreference, HelperPreferencePatch } from '../shared/helper-preferences'
+import type { WritingStyleDraft, WritingStylesView } from '../shared/writing-styles'
 import type { ElevenLabsModelId, ElevenLabsVoice, IntegrationsStatus } from '../shared/elevenlabs'
 import type { DecisionPreference, DecisionPreferencePatch } from '../shared/decision-preferences'
 import type { SpeakResult } from '../shared/speech'
@@ -172,6 +173,13 @@ export interface FleetDesktopAPI {
     decisionId: string,
     patch: DecisionPreferencePatch
   ): Promise<DecisionPreference[]>
+  /** The writing styles of a server (PRDCT-5166), read and written on that
+   *  server: the tabs it launches read them there. Each answers the view. */
+  fleetWritingStyles(serverId: string): Promise<WritingStylesView>
+  fleetWritingStyleSave(serverId: string, draft: WritingStyleDraft): Promise<WritingStylesView>
+  fleetWritingStyleDelete(serverId: string, id: string): Promise<WritingStylesView>
+  fleetWritingStyleSetDefault(serverId: string, id: string | null): Promise<WritingStylesView>
+  fleetWritingStyleImportClaude(serverId: string): Promise<WritingStylesView>
   /** The integrations of a server (PRDCT-4410), read and written on that
    *  server: the key is sealed there, by its own secret port. */
   fleetIntegrations(serverId: string): Promise<IntegrationsStatus>

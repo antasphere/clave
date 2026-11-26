@@ -22,6 +22,8 @@ import { QuotaOverview, ToolToggle, type Tool } from '../usage/UsagePanel'
 import type { ServerUsageProvider } from '../../store/server-settings-store'
 import { AgentsSettings, type LaunchProfileSource } from './AgentsSettings'
 import { DecisionsList, HelpersList } from './HelpersSettings'
+import { WritingStylesList } from './WritingStylesSettings'
+import { writingStylesDescription } from '../../store/writing-styles-store'
 import { IntegrationsList } from './IntegrationsSettings'
 import { SettingsPage, SettingsCallout } from './primitives'
 import { ConnectionsBoard } from './AccountsSettings'
@@ -174,6 +176,29 @@ export function ServerHelpersSettings({ serverId }: { serverId: string }): React
         )}
         {page.connected && settings.status !== 'error' && (
           <DecisionsList machine={serverId} machineName={name} />
+        )}
+      </div>
+    </SettingsPage>
+  )
+}
+
+// ── Writing styles ──────────────────────────────────────────────────────────
+
+/** The writing styles of a server (PRDCT-5166): read and written on the
+ *  server, whose tabs start with them. */
+export function ServerWritingStylesSettings({ serverId }: { serverId: string }): ReactElement {
+  const page = useServerPage(serverId)
+  const { settings, name } = page
+  return (
+    <SettingsPage
+      title="Writing styles"
+      description={writingStylesDescription(name)}
+      testId="styles"
+    >
+      <div className="settings-page-sections" data-server-settings={serverId}>
+        <ServerNotice serverId={serverId} {...page} />
+        {page.connected && settings.status !== 'error' && (
+          <WritingStylesList machine={serverId} machineName={name} />
         )}
       </div>
     </SettingsPage>

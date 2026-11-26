@@ -730,3 +730,29 @@ describe('the provider switch knows Pi (lane D, PRDCT-4427)', () => {
     expect(toChat.piSessionId).toBeUndefined()
   })
 })
+
+describe('a move keeps the writing style of the tab (PRDCT-5166)', () => {
+  const styled: PtySpawnOptions = {
+    claudeMode: true,
+    launchProfileId: 'claude-chat',
+    adoptSessionId: '0b7d4c1e-5f6a-4b3c-8d2e-1f0a9b8c7d6e',
+    writingStyle: 'quiet'
+  }
+
+  it('to another harness, which is then given it its own way', () => {
+    expect(
+      providerSwitchOptions(styled, { adapterId: 'codex-chat', firstMessage: 'x' }).writingStyle
+    ).toBe('quiet')
+  })
+
+  it('between the chat and the terminal of the same harness, both ways', () => {
+    const terminal = transportSwitchOptions(styled, { adapterId: 'pty', resume: 'conv-1' })
+    expect(terminal.writingStyle).toBe('quiet')
+    expect(
+      transportSwitchOptions(
+        { ...terminal, launchProfileId: undefined },
+        { adapterId: 'claude-chat', resume: 'conv-1' }
+      ).writingStyle
+    ).toBe('quiet')
+  })
+})

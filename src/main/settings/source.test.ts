@@ -14,6 +14,7 @@ import { PreferencesManager } from '../preferences-manager'
 import { WorkspaceManager } from '../workspace-manager'
 import { HelperPreferences } from '../helpers/preferences'
 import { DecisionPreferences } from '../decisions/preferences'
+import { WritingStylesStore, WRITING_STYLES_FILE } from '../writing-styles/store'
 import { ElevenLabsIntegration } from '../integrations/elevenlabs'
 import type { LoginJob } from '../account-login'
 import { electronTestPorts, tempDataDir } from '../ports/testing'
@@ -210,6 +211,35 @@ describe('the settings source over the real managers', () => {
     await expect(
       Promise.resolve().then(() => source.decisions.set('nope', { enabled: false }))
     ).rejects.toThrow('There is no decision "nope" on this machine.')
+  })
+
+  it('refuses the writing styles without a store, and writes them to this host’s with one (PRDCT-5166)', async () => {
+    const bare = settingsSourceFromManagers(managers)
+    await expect(Promise.resolve().then(() => bare.writingStyles.list())).rejects.toMatchObject({
+      _tag: 'CapabilityUnavailable',
+      capability: 'writingStyles',
+      message: 'This server keeps no writing styles.'
+    })
+    const home = tempDataDir('clave-source-claude-home-')
+    const source = settingsSourceFromManagers({
+      ...build(),
+      writingStyles: new WritingStylesStore(electronTestPorts(dir), { claudeHome: () => home })
+    })
+    const saved = await source.writingStyles.save({
+      name: 'Plain',
+      description: '',
+      text: 'Write plainly.',
+      statusCard: false
+    })
+    expect(saved.styles.at(-1)).toMatchObject({ id: 'plain', builtIn: false })
+    expect((await source.writingStyles.setDefault('plain')).defaultStyleId).toBe('plain')
+    // On this host's disk: the spawn of either process reads it there.
+    expect(JSON.parse(fs.readFileSync(path.join(dir, WRITING_STYLES_FILE), 'utf-8'))).toMatchObject(
+      { defaultStyleId: 'plain', styles: [{ id: 'plain' }] }
+    )
+    await expect(
+      Promise.resolve().then(() => source.writingStyles.remove('brief'))
+    ).rejects.toThrow('The built-in styles cannot be deleted.')
   })
 
   it('refuses the integrations without a store, and seals the key on this host with one (PRDCT-4410)', async () => {

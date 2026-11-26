@@ -520,6 +520,7 @@ async function launchSessionNow(input: LaunchRequest): Promise<string | null> {
         model: sessionInfo.model,
         piProvider: sessionInfo.piProvider,
         piThinking: sessionInfo.piThinking,
+        writingStyle: sessionInfo.writingStyle,
         claudeProfileId: profile?.id,
         claudeProfileLabel: profile?.label,
         codexAccountId: codexAccount?.id,

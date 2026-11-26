@@ -10,6 +10,7 @@ import {
   currentPage,
   firstBlocks,
   headline,
+  pageAnswered,
   pageBlocks,
   titleKeyOf,
   turnPage,
@@ -334,5 +335,36 @@ describe('a page by blocks (PRDCT-4430)', () => {
     expect(sent).toEqual(markdowns.map((markdown, i) => [i + 1, markdown]))
     // The copy keeps the answer as written.
     expect(p.answer).toBe('## Plan\n\nFirst I read.\n\n- a\n- b\n\n- c\n\n---\n\nDone.')
+  })
+})
+
+describe('a page with a status card (PRDCT-5166)', () => {
+  const BLOCK = '```clave-status\ndoing: the export\nwhere: done\nnext: nothing\n```'
+  it('copies, reads aloud and files the words alone', () => {
+    const [p] = pagesOf([
+      { type: 'user_message', text: 'Ship it' },
+      { type: 'assistant_text', delta: 'Looking.', final: true },
+      { type: 'tool_call', id: 't', name: 'Read', input: 'a' },
+      { type: 'tool_result', id: 't', output: 'b' },
+      { type: 'assistant_text', delta: `Shipped \`main\`.\n\n${BLOCK}`, final: true }
+    ])
+    expect(p.answer).toBe('Looking.\n\nShipped `main`.')
+    for (const text of [p.answer, p.spoken, ...pageBlocks(p).map((b) => b.markdown)])
+      expect(text).not.toMatch(/clave-status|doing:|```/)
+    expect(splitBlocks(p.spoken)).toEqual(['Looking.', 'Shipped `main`.'])
+    expect(p.rows.at(-1)?.prose?.card?.doing).toBe('the export')
+    expect(pageAnswered(p)).toBe(true)
+  })
+  it('counts a card alone as the answer, with nothing to copy', () => {
+    const [p] = pagesOf([
+      { type: 'user_message', text: 'Ship it' },
+      { type: 'assistant_text', delta: BLOCK, final: true }
+    ])
+    expect(p.rows).toHaveLength(1)
+    expect(p.rows[0].prose?.card?.where).toBe('done')
+    expect(p.answer).toBe('')
+    expect(p.spoken).toBe('')
+    expect(p.status).toBe('done')
+    expect(pageAnswered(p)).toBe(true)
   })
 })

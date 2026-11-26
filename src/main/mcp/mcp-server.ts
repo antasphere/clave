@@ -28,6 +28,8 @@ import {
 } from '../../shared/agent-launch'
 import {
   DANGEROUS_MODE_FAMILIES,
+  STYLE_ARGUMENT_DESCRIPTION,
+  STYLE_ARGUMENT_MAX,
   chatDefaultFor,
   chatOfInteractionMode
 } from '../../shared/open-session-modes'
@@ -540,7 +542,7 @@ const NOT_DANGEROUS_MODES = harnessNames((h) => !DANGEROUS_MODE_FAMILIES.has(h.i
 const EFFORT_MODES = harnessNames((h) => h.id === 'claude' || h.id === 'codex', 'and', true)
 
 const LAUNCH_OPTIONS_DESCRIPTION =
-  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for the tabs Clave started on no connection, never sessions started outside Clave); the harnesses not installed are named in notInstalled. Pass what you read to clave_open_session as mode, model, account and profile."
+  "Before opening a tab, or when asked which harness, model or connection has room: lists, for this machine (or for a connected server with server), the installed harnesses with their version, their models (served, or the reason not), the connections of their pool (a subscription or a key) with the suggested one marked, whether each is exhausted for the default model (defaultModel, the model a tab opens on when none is passed; launcherModel is the one the launcher's row would pass), its headroom line and every cap window with what is left and when it resets, and their launch profiles (chat or terminal); a stored connection of Pi or OpenCode carries usedToday (what its own tabs used today: line, requests, tokens, and cost, null where it is not billed per use), and Pi and OpenCode carry signInUsedToday (the same for the tabs Clave started on no connection, never sessions started outside Clave); the harnesses not installed are named in notInstalled. It also lists this machine's writing styles (styles, the default marked), which say how an agent writes to the person: pass one to clave_open_session as style. Pass what you read to clave_open_session as mode, model, account and profile."
 
 const switchModeOf = (raw: unknown): 'propose' | 'automatic' | null =>
   raw === 'propose' || raw === 'automatic' ? raw : null
@@ -1005,7 +1007,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
   server.registerTool(
     'clave_list',
     {
-      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; each session carries its harness (mode), model and launchProfileId as its record keeps them; a session on a harness with a connection pool (${OPEN_POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit). nestedUnder is the tab a session is shown under in the sidebar; parentId is the tab "parent" reaches from it: the tab that opened it, else the tab it is nested under. A tab with a reading carries projects ({ status, names: [{ name, share }] }), the projects Jev read it works on with their shares.`,
+      description: `List the saved servers (id, name, connection state), their workspaces, the open Clave windows (id, workspace, which is yours), the registered workspaces (root folders; each window shows one and scopes what the user sees in it), all groups and sessions (tabs) currently open across every window, plus the pinned workspace groups (launchable templates from .clave files, with their state: idle / active-visible / active-hidden), the focused session, and — when called from inside a Clave tab — which session/group/window is yours. Sessions and groups are annotated with their workspaceId/workspaceName and the windowId they live in; each session carries its harness (mode), model and launchProfileId as its record keeps them; a session on a harness with a connection pool (${OPEN_POOLED_HARNESS_NAMES}) also carries its connection ({ id, label, exhausted }, the subscription or key it runs on and whether it is about to hit its limit). nestedUnder is the tab a session is shown under in the sidebar; parentId is the tab "parent" reaches from it: the tab that opened it, else the tab it is nested under. style is the writing style a session was opened with, absent for none. A tab with a reading carries projects ({ status, names: [{ name, share }] }), the projects Jev read it works on with their shares.`,
       inputSchema: {
         workspace: z
           .string()
@@ -1208,6 +1210,12 @@ function buildServer(callerSessionId: string | undefined): McpServer {
           .string()
           .optional()
           .describe('Agent modes only: an initial prompt the agent starts working on immediately'),
+        style: z
+          .string()
+          .min(1)
+          .max(STYLE_ARGUMENT_MAX)
+          .optional()
+          .describe(STYLE_ARGUMENT_DESCRIPTION),
         workspace: z
           .string()
           .optional()
@@ -1569,7 +1577,7 @@ function buildServer(callerSessionId: string | undefined): McpServer {
     'clave_read_session',
     {
       description:
-        "Read the last N rendered lines of a tab's terminal without interrupting it — check what a delegated agent is doing, read a dev server's logs, or inspect a sibling's state. Works for any tab of this Mac and of a connected Clave server, plain terminals included: read a tab first to learn what it is doing, and message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent's next instruction. Returns scrollback for normal-buffer output (most CLIs, including claude/codex inline); for a full-screen/alternate-screen program (e.g. a pager or a TUI that took over the screen) it returns only the currently visible screen, so a large `lines` value may come back shorter. Target by session id, exact tab name, or \"parent\".",
+        "Read the last N rendered lines of a tab's terminal without interrupting it — check what a delegated agent is doing, read a dev server's logs, or inspect a sibling's state. Works for any tab of this Mac and of a connected Clave server, plain terminals included: read a tab first to learn what it is doing, and message it only when you need it to act, never to report progress to a tab that did not ask: an unasked message becomes that agent's next instruction. Returns scrollback for normal-buffer output (most CLIs, including claude/codex inline); for a full-screen/alternate-screen program (e.g. a pager or a TUI that took over the screen) it returns only the currently visible screen, so a large `lines` value may come back shorter. Target by session id, exact tab name, or \"parent\". For a chat tab the answer also carries status, the status its agent ended its last turn on (what it is doing, where it stands, what is to decide, what the person must do next; needsYou, and answered once the person has written since), or null when it wrote none.",
       inputSchema: {
         sessionId: z
           .string()

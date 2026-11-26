@@ -63,6 +63,7 @@ import type {
 import type { ElevenLabsModelId, ElevenLabsStatus, ElevenLabsVoice } from '../../shared/elevenlabs'
 import type { JevStatus } from '../../shared/jev'
 import type { DecisionPreference, DecisionPreferencePatch } from '../../shared/decision-preferences'
+import type { WritingStylesView } from '../../shared/writing-styles'
 // ── Lane B (harness wave): provider connections ──
 import type {
   ProviderCompanyId,
@@ -168,6 +169,9 @@ export interface SettingsManagers {
       patch: DecisionPreferencePatch
     ): DecisionPreference[] | Promise<DecisionPreference[]>
   }
+  /** The writing styles of this host (PRDCT-5166,
+   *  `../writing-styles/store.ts`); absent, refused. */
+  writingStyles?: WritingStylesLike
   /** The integrations of this host (PRDCT-4410): the ElevenLabs key sealed
    *  on its own secret port; absent, refused. */
   integrations?: IntegrationsLike
@@ -201,6 +205,17 @@ export interface SettingsManagers {
   /** The Pi and OpenCode usage of the tabs this host runs; absent, refused.
    *  Loaded on first use: its graph reaches the terminal backend. */
   harnessUsage?: () => Promise<HarnessUsageLike>
+}
+
+/** The writing styles of a host as the source needs them
+ *  (`../writing-styles/store.ts`'s `WritingStylesStore`). Each write throws
+ *  a plain `Error` with the person's sentence when it refuses. */
+export interface WritingStylesLike {
+  view(): WritingStylesView
+  save(draft: unknown): WritingStylesView
+  remove(id: string): WritingStylesView
+  setDefault(id: string | null): WritingStylesView
+  importClaudeOutputStyle(): WritingStylesView
 }
 
 // PRDCT-4551: what Pi and OpenCode tabs used, per connection
@@ -330,6 +345,8 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
     elevenLabs,
     ...(jevStatus && { jev: jevStatus })
   })
+  const styles = (): WritingStylesLike =>
+    m.writingStyles ?? refuse('writingStyles', 'This server keeps no writing styles.')
   // Lane C of the harness wave (PRDCT-4496): the models catalogue
   const modelsCatalog = (): ModelsCatalogLike =>
     m.modelsCatalog ?? refuse('modelsCatalog', 'This server has no models catalogue.')
@@ -483,6 +500,13 @@ export function settingsSourceFromManagers(m: SettingsManagers): SettingsSourceS
         m.decisions
           ? m.decisions.set(id, { ...patch })
           : refuse('decisions', 'This server runs no decisions.')
+    },
+    writingStyles: {
+      list: () => styles().view(),
+      save: (draft) => styles().save({ ...draft }),
+      remove: (id) => styles().remove(id),
+      setDefault: (id) => styles().setDefault(id),
+      importClaude: () => styles().importClaudeOutputStyle()
     },
     integrations: {
       read: () => withJev(integrations().status()),

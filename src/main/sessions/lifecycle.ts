@@ -51,6 +51,9 @@ export type SessionInfoResult = {
   model?: string
   piProvider?: string
   piThinking?: PtySpawnOptions['piThinking']
+  /** The id of the writing style the agent was given (PRDCT-5166); absent
+   *  for a tab on none. */
+  writingStyle?: string
 }
 
 /** The tmux switch lives in the app's own preferences file
@@ -200,7 +203,8 @@ export async function spawnSession(
     launchProfileId: session.launchProfileId,
     model: session.model,
     piProvider: session.piProvider,
-    piThinking: session.piThinking
+    piThinking: session.piThinking,
+    ...(session.writingStyle ? { writingStyle: session.writingStyle } : {})
   }
 }
 

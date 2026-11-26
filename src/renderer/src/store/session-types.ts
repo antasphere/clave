@@ -378,6 +378,10 @@ export interface Session {
    *  keeps it (PRDCT-5179). Absent means never read. Set by the server's
    *  reading only (`readTabProjects`, `session.projects_read`). */
   projects?: TabProjects
+  /** The id of the writing style the tab's agent was given (PRDCT-5166),
+   *  from the spawn's answer or the record; absent for a tab on none. A
+   *  tab's runtime fact, never a `.clave` field. */
+  writingStyle?: string
   claudeSessionId: string | null
   piSessionId?: string | null
   launchProfileId?: string
@@ -585,6 +589,7 @@ export type SettingsSection =
   | 'accounts'
   | 'agents'
   | 'helpers'
+  | 'styles'
   | 'integrations'
   | 'appearance'
   | 'keymaps'

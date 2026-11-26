@@ -7,7 +7,8 @@ import {
   CLAVE_TAB_MCP_TOKEN_ENV,
   opencodeClaveServer,
   readClaveMcpEndpoint,
-  withOpencodeClaveTools
+  withOpencodeClaveTools,
+  withOpencodeInstructions
 } from './clave-tools-launch'
 
 /**
@@ -148,6 +149,56 @@ function madeUpPi(options: { mcp?: boolean; register?: () => void } = {}): {
 const startSession = (handlers: Map<string, ((...args: unknown[]) => unknown)[]>): void => {
   for (const handler of handlers.get('session_start') ?? []) handler({ reason: 'startup' }, {})
 }
+
+describe("a writing style's instruction file in OpenCode's configuration (PRDCT-5166)", () => {
+  const FILE = '/data/writing-styles/applied/0123456789abcdef.md'
+  const read = (env: Record<string, string>): Record<string, unknown> =>
+    JSON.parse(env.OPENCODE_CONFIG_CONTENT) as Record<string, unknown>
+
+  it('makes a configuration of its own from an empty environment', () => {
+    expect(read(withOpencodeInstructions(undefined, FILE))).toEqual({ instructions: [FILE] })
+    expect(read(withOpencodeInstructions({}, FILE))).toEqual({ instructions: [FILE] })
+  })
+
+  it("keeps a connection's configuration and its other variables key by key", () => {
+    const own = {
+      providers: { 'made-up-provider': { settings: { apiKey: '{env:MADE_UP_KEY}' } } },
+      model: 'made-up-provider/m1'
+    }
+    const env = withOpencodeInstructions(
+      { MADE_UP_KEY: 'made-up-value', OPENCODE_CONFIG_CONTENT: JSON.stringify(own) },
+      FILE
+    )
+    expect(env.MADE_UP_KEY).toBe('made-up-value')
+    expect(read(env)).toEqual({ ...own, instructions: [FILE] })
+  })
+
+  it('appends to an instructions array already there, once', () => {
+    const env = withOpencodeInstructions(
+      { OPENCODE_CONFIG_CONTENT: JSON.stringify({ instructions: ['AGENTS.md'] }) },
+      FILE
+    )
+    expect(read(env)).toEqual({ instructions: ['AGENTS.md', FILE] })
+    expect(read(withOpencodeInstructions(env, FILE))).toEqual({ instructions: ['AGENTS.md', FILE] })
+  })
+
+  it('replaces a value that is not a JSON object with a configuration of its own', () => {
+    for (const content of ['not json', '[1,2]', '"text"'])
+      expect(read(withOpencodeInstructions({ OPENCODE_CONFIG_CONTENT: content }, FILE))).toEqual({
+        instructions: [FILE]
+      })
+  })
+
+  it("keeps the instructions when Clave's own server is merged in after", () => {
+    const styled = withOpencodeInstructions({ OPENCODE_CONFIG_CONTENT: '{"model":"m"}' }, FILE)
+    const tooled = withOpencodeClaveTools(styled, { url: URL, token: TOKEN })!
+    expect(read(tooled)).toEqual({
+      model: 'm',
+      instructions: [FILE],
+      mcp: { servers: { clave: opencodeClaveServer(URL) } }
+    })
+  })
+})
 
 describe("Clave's Pi extension", () => {
   afterEach(() => {

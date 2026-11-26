@@ -256,6 +256,61 @@ describe('the decisions on the server (PRDCT-5179)', () => {
   })
 })
 
+describe('the writing styles on the server (PRDCT-5166)', () => {
+  it('lists the host’s styles, every field, and saves a draft as it was sent', async () => {
+    fake.styles = { ...fake.styles, claudeOutputStyle: { name: 'Field notes' } }
+    const listed = await get('/writing-styles')
+    expect(listed.status).toBe(200)
+    expect(await listed.json()).toEqual(fake.styles)
+    const draft = {
+      name: 'Plain',
+      description: 'Plainly.',
+      text: 'Write plainly.',
+      statusCard: true
+    }
+    const saved = await post('/writing-styles', draft)
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toMatchObject({
+      styles: [{ id: 'brief' }, { id: 'plain', ...draft, builtIn: false }],
+      claudeOutputStyle: { name: 'Field notes' }
+    })
+    expect(fake.calls.filter((c) => c.method === 'writingStyles.save')).toEqual([
+      { method: 'writingStyles.save', args: [draft] }
+    ])
+    await post('/writing-styles', { ...draft, id: 'plain', name: 'Plainer' })
+    expect(fake.calls.at(-1)?.args).toEqual([{ ...draft, id: 'plain', name: 'Plainer' }])
+  })
+
+  it('sets and clears the default, deletes and imports, each answering the view', async () => {
+    const set = await post('/writing-styles/default', { id: 'brief' })
+    expect(set.status).toBe(200)
+    expect(await set.json()).toMatchObject({ defaultStyleId: 'brief' })
+    expect(await (await post('/writing-styles/default', { id: null })).json()).toMatchObject({
+      defaultStyleId: null
+    })
+    expect(fake.calls.at(-1)).toEqual({ method: 'writingStyles.setDefault', args: [null] })
+    const removed = await post('/writing-styles/delete', { id: 'brief' })
+    expect(await removed.json()).toMatchObject({ styles: [] })
+    expect(fake.calls.at(-1)).toEqual({ method: 'writingStyles.remove', args: ['brief'] })
+    const imported = await post('/writing-styles/import-claude', {})
+    expect(imported.status).toBe(422)
+    expect(await imported.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'Claude Code has no output style of yours to import.'
+    })
+  })
+
+  it('refuses with the store’s sentence, and a draft it cannot decode', async () => {
+    const unknown = await post('/writing-styles/default', { id: 'gone' })
+    expect(unknown.status).toBe(422)
+    expect(await unknown.json()).toEqual({
+      _tag: 'SettingsRefused',
+      message: 'This style no longer exists.'
+    })
+    expect((await post('/writing-styles', { name: 'No text' })).status).toBe(400)
+  })
+})
+
 describe('the integrations on the server (PRDCT-4410)', () => {
   const KEY = 'xi-server-test-key'
   it('hands the ElevenLabs key to the source and to no answer', async () => {

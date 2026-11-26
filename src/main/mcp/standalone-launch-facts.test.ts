@@ -11,6 +11,8 @@ import type { LaunchFacts } from '../routines/launch'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
 import { providerConnection } from '../../shared/provider-connection'
 import { launchOptions } from '../../shared/launch-options'
+import { BUILT_IN_STYLES } from '../../shared/writing-styles'
+import { setWritingStylesSource } from '../writing-styles/source'
 import { HARNESS_BY_ID } from '../../shared/harness'
 import { resolveProviderConnection } from '../../shared/provider-connection-pick'
 import {
@@ -254,6 +256,23 @@ describe('standaloneLaunchFacts', () => {
 })
 
 describe('launchOptionsInput', () => {
+  // PRDCT-5166: the server's writing styles, from the source its spawn reads.
+  it("carries this server's writing styles as its styles' source answers them", () => {
+    const launch = standaloneLaunchFacts(deps())
+    const view = {
+      styles: [...BUILT_IN_STYLES],
+      defaultStyleId: 'brief',
+      claudeOutputStyle: null
+    }
+    setWritingStylesSource({ view: () => view })
+    try {
+      const input = launchOptionsInput(launch, undefined, {})
+      expect(input.writingStyles).toEqual(view)
+      expect(launchOptions(input).defaultStyle).toBe('brief')
+    } finally {
+      setWritingStylesSource(null)
+    }
+  })
   it('maps detection’s statuses to presence, and none when there are no statuses', async () => {
     const launch = standaloneLaunchFacts(deps())
     const statuses = [

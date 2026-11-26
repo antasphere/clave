@@ -25,6 +25,8 @@ import type {
   ModelsCatalogView
 } from '@clave/contract/settings/models-catalog-view'
 import type { ProviderConnectionView } from '@clave/contract/settings/connections'
+import { setWritingStylesSource } from '../writing-styles/source'
+import { BUILT_IN_STYLES } from '../../shared/writing-styles'
 
 const group = (id: string, extra: Partial<SidebarGroup> = {}): SidebarGroup => ({
   ...{ id, name: id, sessionIds: [], collapsed: false, cwd: null, terminals: [] },
@@ -570,6 +572,21 @@ describe('serveCommand', () => {
     expect(listed.sessions.find((s) => s.id === 'unread')).not.toHaveProperty('projects')
   })
 
+  it('says the writing style each tab was opened with, and no style key for a tab on none (PRDCT-5166)', async () => {
+    const h = setup({
+      layouts: [layout('wA', [group('gA', { sessionIds: ['styled', 'plain'] })])],
+      sessions: [session('styled'), session('plain')],
+      records: {
+        styled: record('styled', { writingStyle: 'quiet' }),
+        plain: record('plain', {})
+      }
+    })
+    type Listing = { sessions: Record<string, unknown>[] }
+    const listed = (await serveCommand('list', {}, h.ctx())) as Listing
+    expect(listed.sessions.find((s) => s.id === 'styled')?.style).toBe('quiet')
+    expect(listed.sessions.find((s) => s.id === 'plain')).not.toHaveProperty('style')
+  })
+
   it('gives a tab nobody opened the tab it is nested under as its parent, as the other roads do (PRDCT-4997)', async () => {
     const h = setup({
       layouts: [layout('wA', [group('gA', { sessionIds: ['tucked', 'opened'] })])],
@@ -943,6 +960,84 @@ describe('launchOptions, served: what this machine can launch', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // PRDCT-5166: the machine's writing styles, asked of the server that
+  // launches the tab, never of main's own process (a packaged app's server is
+  // a process apart, and main then holds no store).
+  describe("the machine's writing styles, from the server's API", () => {
+    const withStyles = (
+      h: ReturnType<typeof setup>,
+      list: () => Promise<unknown>
+    ): ReturnType<ReturnType<typeof setup>['ctx']> => {
+      const base = h.ctx()
+      const api = {
+        ...base.api,
+        settings: { writingStyles: { list } }
+      } as unknown as ClaveApiClient
+      return h.ctx({ api })
+    }
+
+    it('lists the styles and the default the server answers', async () => {
+      const h = setup()
+      const list = vi.fn(async () => ({
+        styles: [
+          ...BUILT_IN_STYLES,
+          {
+            id: 'terse',
+            name: 'Terse',
+            description: 'One line.',
+            text: 'One line.',
+            statusCard: false,
+            builtIn: false
+          }
+        ],
+        defaultStyleId: 'terse',
+        claudeOutputStyle: null
+      }))
+      // A source in main's own process that disagrees: the listing must not
+      // read it.
+      setWritingStylesSource({
+        view: () => ({
+          styles: [...BUILT_IN_STYLES],
+          defaultStyleId: 'quiet',
+          claudeOutputStyle: null
+        })
+      })
+      try {
+        const answer = (await serveCommand(
+          'launchOptions',
+          {},
+          withStyles(h, list)
+        )) as LaunchOptions
+        expect(list).toHaveBeenCalledTimes(1)
+        expect(answer.styles.map((style) => style.id)).toEqual(['brief', 'quiet', 'terse'])
+        expect(answer.defaultStyle).toBe('terse')
+        expect(answer.styles.at(-1)).toEqual({
+          id: 'terse',
+          name: 'Terse',
+          description: 'One line.',
+          statusCard: false,
+          default: true
+        })
+      } finally {
+        setWritingStylesSource(null)
+      }
+    })
+
+    it('offers no style when the server cannot answer, rather than failing', async () => {
+      const h = setup()
+      const answer = (await serveCommand(
+        'launchOptions',
+        {},
+        withStyles(h, async () => {
+          throw new Error('no such query')
+        })
+      )) as LaunchOptions
+      expect(answer.styles).toEqual([])
+      expect(answer.defaultStyle).toBeNull()
+      expect(answer.harnesses.length).toBeGreaterThan(0)
+    })
   })
 
   it('still answers on a shell with none of the lane A facts: installed unknown, models unavailable', async () => {

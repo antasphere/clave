@@ -17,6 +17,7 @@ import { ModeLine } from './PermissionReading'
 import { isQuestion } from './approvals'
 import { ChatCode } from './code'
 import { Attachments } from './Attachments'
+import { EntryStatusCard } from './StatusCard'
 import { openLink, wantsExternal } from '../../../src/renderer/src/lib/open-link'
 
 /** When a turn happened, the way a reader wants it: relative while fresh,
@@ -124,14 +125,20 @@ export const EntryRow = memo(function EntryRow({
     )
   }
   if (entry.kind === 'assistant')
+    // The status the answer ended on (PRDCT-5166) is drawn under its words,
+    // and a message that is a card alone draws the card alone: the copy is
+    // of the words, so it is offered only where there are some.
     return (
       <div className="chat-turn-wrap" data-side="start">
-        <article className="chat-turn chat-prose" data-role="assistant">
-          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
-            {entry.text}
-          </ReactMarkdown>
-        </article>
-        <TurnMeta at={entry.at} text={entry.text} />
+        {entry.text.trim() !== '' && (
+          <article className="chat-turn chat-prose" data-role="assistant">
+            <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
+              {entry.text}
+            </ReactMarkdown>
+          </article>
+        )}
+        {entry.card && <EntryStatusCard entry={entry} card={entry.card} />}
+        {entry.text.trim() !== '' && <TurnMeta at={entry.at} text={entry.text} />}
       </div>
     )
   if (entry.kind === 'permission')

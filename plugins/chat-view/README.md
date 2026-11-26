@@ -223,6 +223,46 @@ protocol (`Input.dispatchDragEvent`, real File objects with their entries) and
 the sidebar's real pointer drag included, and
 reads the provider's side off the echo adapter's reply.
 
+## The status card
+
+A writing style may ask the agent to end the message that hands the turn back
+with one fenced block tagged `clave-status` (`doing`, `where`, `decide`,
+`next`, PRDCT-5166). The three views take that block out of the answer and
+draw it as a card under the words; a terminal tab shows the block as written.
+The rule the agent is given and its reader are one module,
+`src/shared/status-card.ts`: this plugin calls it and never parses.
+
+The one rule lives in the reducer (`src/reducer.ts`, `assistant_text`): while
+a message is written, `holdStatusTail` keeps a possible block out of `text`
+in `held`, so not one backtick of it flashes as code; once the message is
+final, `readStatusCard` makes the block its `card` and `text` its words.
+A message that never gets its final (a stop, the turn closing, the process
+gone) is read the same way before it is closed, and what was held comes back
+unless it is a whole card. So `entry.text` is the answer's words for every
+reader at every moment: the copy, the export, Folio's voice and updates, the
+Find, the fold of the working notes, a replayed page, a sub-agent's log.
+
+A message that is a card alone has an empty `text`, and it is still the
+agent's message: `hasContent` (the reducer) is the one rule that says so, read
+by `visibleEntries`, `closeTurn`, `answeredSince` and Folio's `pageAnswered`.
+It is drawn (the card, no words, no copy), it is the turn's last words, and a
+Folio page holding it is finished, with nothing to copy or read aloud.
+
+The card is `src/StatusCard.tsx` with `src/status-card.css` (tokens only; the
+static half of `tests/visual/chat-view.mjs` reads it). Its accent goes once,
+on the next step (or the decisions when no step is named); with nothing owed
+the foot reads "Nothing needed from you". Only the conversation's last answer
+can be current (`src/status-current.ts`, `currentCard`): any other card is
+`data-past`, muted and whole. The export writes the card as a quote of
+`statusCardLines`; the Find searches its fields (`.status-card-field`) but not
+its labels; the handoff note keeps the reply's words alone.
+
+Checks: the reducer's cases in `src/renderer/src/views/reducer.test.ts`,
+`status-card.test.ts`, `search.test.ts`, `stretches.test.ts`,
+`export.test.ts` and `lab/pages.test.ts` here; on the real app,
+`node tests/e2e/run.mjs chat-status-card` (the three views); the screenshots,
+`tests/e2e/look/status-card.spec.mjs` (run as its header says).
+
 ## Folio, the experimental view (`lab`)
 
 `clave.chat-view/lab`, titled Folio (`src/lab/`, its name and one-line pitch in

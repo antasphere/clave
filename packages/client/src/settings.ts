@@ -47,6 +47,25 @@ const decisionsMissing = <T>(run: Promise<T>): Promise<T> =>
       : error
   })
 
+/** A server released before the writing styles (PRDCT-5166): the same 404,
+ *  said as the update it needs. The window says the same words
+ *  (`src/shared/writing-styles.ts`, which this package cannot import; the
+ *  test holds the two equal). */
+export const WRITING_STYLES_NEED_UPDATE = 'This server needs an update to show its writing styles.'
+export class WritingStylesMissing extends Error {
+  readonly _tag = 'WritingStylesMissing'
+  constructor() {
+    super(WRITING_STYLES_NEED_UPDATE)
+    this.name = 'WritingStylesMissing'
+  }
+}
+const writingStylesMissing = <T>(run: Promise<T>): Promise<T> =>
+  run.catch((error: unknown) => {
+    throw error instanceof Error && Schema.is(NotFoundProblem)(error.cause)
+      ? new WritingStylesMissing()
+      : error
+  })
+
 /** A server released before the integrations (PRDCT-4410): the same 404,
  *  said as the update it needs. */
 export const INTEGRATIONS_NEED_UPDATE = 'This server needs an update to show its integrations.'
@@ -86,6 +105,9 @@ export type DecisionPreference = typeof S.DecisionPreferenceView.Type
 export interface DecisionPreferencePatch {
   readonly enabled?: boolean
 }
+export type WritingStyle = typeof S.WritingStyleView.Type
+export type WritingStylesView = typeof S.WritingStylesView.Type
+export type WritingStyleDraft = typeof S.SaveWritingStyle.payload.Type
 export type IntegrationsStatus = typeof S.IntegrationsView.Type
 export type ElevenLabsModelId = typeof S.ElevenLabsModelId.Type
 export type ElevenLabsVoices = typeof S.ElevenLabsVoicesView.Type
@@ -195,6 +217,15 @@ export interface SettingsClient {
       id: string,
       patch: DecisionPreferencePatch
     ) => Promise<ReadonlyArray<DecisionPreference>>
+  }
+  /** The writing styles of that server (PRDCT-5166); every call answers
+   *  the whole view. */
+  readonly writingStyles: {
+    readonly list: () => Promise<WritingStylesView>
+    readonly save: (draft: WritingStyleDraft) => Promise<WritingStylesView>
+    readonly remove: (id: string) => Promise<WritingStylesView>
+    readonly setDefault: (id: string | null) => Promise<WritingStylesView>
+    readonly importClaude: () => Promise<WritingStylesView>
   }
   /** The integrations of that server (PRDCT-4410): the ElevenLabs key goes
    *  in once, as the redacted field's plain string, and comes back in no
@@ -374,6 +405,28 @@ export function settingsClient(callApi: Call): SettingsClient {
         decisionsMissing(call((g) => g.setDecisionPreference({ payload: { id, ...patch } }))).then(
           (v) => v.decisions
         )
+    },
+    writingStyles: {
+      list: () => writingStylesMissing(call((g) => g.listWritingStyles({ payload: {} }))),
+      save: (draft) =>
+        writingStylesMissing(
+          call((g) =>
+            g.saveWritingStyle({
+              payload: {
+                ...(draft.id !== undefined && { id: draft.id }),
+                name: draft.name,
+                description: draft.description,
+                text: draft.text,
+                statusCard: draft.statusCard
+              }
+            })
+          )
+        ),
+      remove: (id) => writingStylesMissing(call((g) => g.deleteWritingStyle({ payload: { id } }))),
+      setDefault: (id) =>
+        writingStylesMissing(call((g) => g.setDefaultWritingStyle({ payload: { id } }))),
+      importClaude: () =>
+        writingStylesMissing(call((g) => g.importClaudeOutputStyle({ payload: {} })))
     },
     integrations: {
       read: () => integrationsMissing(call((g) => g.readIntegrations({ payload: {} }))),

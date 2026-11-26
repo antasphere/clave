@@ -31,6 +31,7 @@ import { launchProfileManager } from '../launch-profile-manager'
 import { preferencesManager } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { installWritingStyles, writingStylesStore } from '../writing-styles/store'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { jevIntegration } from '../integrations/jev'
 import { decisionPreferences, installDecisionPreferences } from '../decisions/preferences'
@@ -73,6 +74,8 @@ export function standaloneSettingsSource(
   installHelperPreferences(helperPreferences)
   // And the decisions read its switches, on its own Jev key (PRDCT-5179).
   installDecisionPreferences(decisionPreferences)
+  // The tabs this server spawns read its writing styles (PRDCT-5166).
+  installWritingStyles(writingStylesStore)
   // The ports are installed: the stored session is read back now. A state,
   // never a rejection; a login is never what stops the server from starting.
   void antasphere.restore()
@@ -88,6 +91,7 @@ export function standaloneSettingsSource(
     workspaces: workspaceManager,
     helpers: helperPreferences,
     decisions: decisionPreferences,
+    writingStyles: writingStylesStore,
     integrations: elevenLabsIntegration,
     // The Jev key (PRDCT-5179), sealed beside the ElevenLabs one.
     jev: jevIntegration,

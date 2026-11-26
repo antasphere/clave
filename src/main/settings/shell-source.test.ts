@@ -176,3 +176,44 @@ describe('main owns the decisions only when it is the server', () => {
     }
   )
 })
+
+/**
+ * The writing styles (PRDCT-5166) follow the helpers: main keeps this Mac's
+ * styles and its spawns read them only while the server runs in its process.
+ * With a server behind the window main keeps none and installs no source.
+ */
+describe('main owns the writing styles only when it is the server', () => {
+  it('in-process: the store is handed to the source and is what a spawn reads', async () => {
+    await load('in-process')
+    const { installSettingsPorts, resetSettingsPorts } = await import('../ports')
+    const { tempDataDir, electronTestPorts } = await import('../ports/testing')
+    installSettingsPorts(electronTestPorts(tempDataDir('clave-shell-styles-')))
+    try {
+      const store = await import('../writing-styles/store')
+      const source = await import('../writing-styles/source')
+      const m = (await import('./shell-source')) as unknown as {
+        shellSettingsSource: { managers: { writingStyles?: unknown } }
+      }
+      expect(m.shellSettingsSource.managers.writingStyles).toBe(store.writingStylesStore)
+      store.writingStylesStore.setDefault('quiet')
+      expect(source.writingStylesView().defaultStyleId).toBe('quiet')
+      source.setWritingStylesSource(null)
+    } finally {
+      resetSettingsPorts()
+    }
+  })
+
+  it.each(['separate', 'attached'] as const)(
+    '%s: no styles in main, no source installed',
+    async (mode) => {
+      const m = (await load(mode)) as unknown as {
+        shellSettingsSource: { managers: { writingStyles?: unknown } }
+      }
+      expect('writingStyles' in m.shellSettingsSource.managers).toBe(false)
+      // No store installed: a spawn here reads the built-in styles alone.
+      const source = await import('../writing-styles/source')
+      expect(source.writingStylesView().styles.every((style) => style.builtIn)).toBe(true)
+      expect(source.writingStylesView().defaultStyleId).toBeNull()
+    }
+  )
+})

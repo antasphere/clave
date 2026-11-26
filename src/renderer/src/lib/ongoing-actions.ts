@@ -141,6 +141,8 @@ async function resumeEntry(entry: OngoingEntry, keepOngoing: boolean): Promise<s
       launchProfileId: info.launchProfileId,
       piProvider: info.piProvider,
       piThinking: info.piThinking,
+      // The writing style the spawn applied (PRDCT-5166).
+      writingStyle: info.writingStyle,
       ...(isPi ? {} : accountSessionFields(entry.launch)),
       // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
       ...(isPi && entry.launch.connectionId

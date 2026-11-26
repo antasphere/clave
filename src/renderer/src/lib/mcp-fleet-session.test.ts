@@ -359,3 +359,48 @@ describe('MCP fleet session launch', () => {
     expect(api.fleetSnapshot).not.toHaveBeenCalled()
   })
 })
+
+// PRDCT-5166: a server tab opened with a writing style; the server's spawn
+// resolves it against that server's styles and its refusal is the tool's error.
+describe('MCP fleet session launch with a writing style', () => {
+  it('hands the style to the server untouched, and nothing when none is named', async () => {
+    const api = setup()
+    await openFleetSession('server', 'ws', undefined, {
+      cwd: '/srv/repo',
+      mode: 'codex',
+      style: 'quiet'
+    })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).toMatchObject({ writingStyle: 'quiet' })
+    await openFleetSession('server', 'ws', undefined, { cwd: '/srv/repo', mode: 'codex' })
+    expect(api.fleetStart.mock.calls.at(-1)![2]).not.toHaveProperty('writingStyle')
+  })
+
+  it('refuses a style on a terminal before the server is asked', async () => {
+    const api = setup()
+    await expect(
+      openFleetSession('server', 'ws', undefined, {
+        cwd: '/srv/repo',
+        mode: 'terminal',
+        style: 'brief'
+      })
+    ).rejects.toThrow('The style argument applies to agent modes only (got mode "terminal")')
+    expect(api.fleetStart).not.toHaveBeenCalled()
+  })
+
+  it("says the server's refusal in its own words, whatever shape it arrives in", async () => {
+    const reason = 'Unknown writing style "loud". This server has: none, brief, quiet.'
+    const api = setup()
+    // A tagged failure that crossed the wire as data, not as an Error.
+    api.fleetStart.mockRejectedValueOnce({ _tag: 'SessionStartFailed', message: reason })
+    await expect(
+      openFleetSession('server', 'ws', undefined, { cwd: '/srv/repo', style: 'loud' })
+    ).rejects.toThrow(new Error(reason))
+    // Main's IPC error, prefixed by Electron with its channel.
+    api.fleetStart.mockRejectedValueOnce(
+      new Error(`Error invoking remote method 'pty:spawn': Error: ${reason}`)
+    )
+    await expect(
+      openFleetSession('server', 'ws', undefined, { cwd: '/srv/repo', style: 'loud' })
+    ).rejects.toThrow(new Error(reason))
+  })
+})

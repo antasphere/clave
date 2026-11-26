@@ -39,6 +39,7 @@ import { shellOwnsAntasphereAccount } from '../server-boot'
 import { serverLaunch } from '../server-launch'
 import { TEST_NO_ACTIVATE } from '../test-mode'
 import { helperPreferences, installHelperPreferences } from '../helpers/preferences'
+import { installWritingStyles, writingStylesStore } from '../writing-styles/store'
 import { elevenLabsIntegration } from '../integrations/elevenlabs'
 import { jevIntegration } from '../integrations/jev'
 import { setHelperConfigSource } from '../helpers/registry'
@@ -88,6 +89,9 @@ export const shellSettingsSource: SettingsSourceService = settingsSourceFromMana
   // The decisions (PRDCT-5179), like the helpers: main's only while it is
   // the server, the process that holds the Jev key.
   ...(shellOwnsHelpers && { decisions: decisionPreferences }),
+  // The writing styles, like the helpers, belong to whichever process is the
+  // server (PRDCT-5166): main only while it runs in-process.
+  ...(shellOwnsHelpers && { writingStyles: writingStylesStore }),
   // The integrations, like the helpers, belong to whichever process is the
   // server (PRDCT-4410): main only while it runs in-process.
   ...(shellOwnsHelpers && { integrations: elevenLabsIntegration }),
@@ -128,6 +132,9 @@ else setHelperConfigSource(() => ({ refused: HELPERS_RUN_ON_SERVER }))
 // server; otherwise every one is refused here before the key is read.
 if (shellOwnsHelpers) installDecisionPreferences(decisionPreferences)
 else refuseDecisionsHere()
+// The tabs main spawns in-process read this Mac's writing styles (PRDCT-5166);
+// with a server behind the window the tabs are its, and so are the styles.
+if (shellOwnsHelpers) installWritingStyles(writingStylesStore)
 
 if (TEST_NO_ACTIVATE) {
   const hooks = globalThis as { __claveE2E?: { settings?: SettingsSourceService } }

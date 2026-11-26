@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
-import { readHistoryLines, type ReadableHistoryPage } from './history-read'
+import { readChatHistory, readHistoryLines, type ReadableHistoryPage } from './history-read'
 import type { ReadableEvent } from './history-text'
 
 /** A conversation paged as a history read pages it: `size` events a page, newest last. */
@@ -76,5 +76,47 @@ describe('a chat read as lines (PRDCT-4666)', () => {
     )
     expect(await readHistoryLines(silent, 5)).toEqual([])
     expect(silent).toHaveBeenCalledTimes(25)
+  })
+})
+
+describe('a chat read with its status (PRDCT-5166)', () => {
+  const ended: ReadableEvent[] = [
+    { type: 'user_message', text: 'ship it' },
+    {
+      type: 'assistant_text',
+      delta: 'Shipped.\n\n```clave-status\nwhere: merged\nnext: check the link\n```',
+      final: true
+    }
+  ]
+
+  it('counts the card’s lines as lines', async () => {
+    expect(await readHistoryLines(pager(ended, 200), 2)).toEqual([
+      '  Where: merged',
+      '  Next: check the link'
+    ])
+  })
+
+  it('gives the last message’s status from the pages it read, even past the lines kept', async () => {
+    const read = await readChatHistory(
+      pager([...ended, { type: 'user_message', text: 'ok' }], 200),
+      1
+    )
+    expect(read.lines).toEqual(['You: ok'])
+    expect(read.status).toEqual({
+      doing: null,
+      where: 'merged',
+      decide: [],
+      next: 'check the link',
+      needsYou: true,
+      answered: true
+    })
+  })
+
+  it('gives no status for a chat whose last answer has none', async () => {
+    const read = await readChatHistory(
+      pager([...ended, { type: 'assistant_text', delta: 'More.', final: true }], 200),
+      10
+    )
+    expect(read.status).toBeNull()
   })
 })

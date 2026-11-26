@@ -6,6 +6,7 @@ import { tempDataDir } from '../ports/testing'
 import { standaloneSettingsSource } from './standalone-source'
 import { helperById, helperConfig, setHelperConfigSource } from '../helpers/registry'
 import { decisionById, decisionConfig, setDecisionConfigSource } from '../decisions/registry'
+import { launchStyle, setWritingStylesSource } from '../writing-styles/source'
 
 /**
  * The standalone server owns the Antasphere login the way the shell does
@@ -87,6 +88,29 @@ describe('the decisions on the standalone server (PRDCT-5179)', () => {
     } finally {
       shutdown()
       setDecisionConfigSource()
+    }
+  })
+})
+
+describe('the writing styles on the standalone server (PRDCT-5166)', () => {
+  it("a spawn reads this server's styles, written through its settings source", async () => {
+    const dir = tempDataDir('clave-standalone-styles-')
+    const { settings, shutdown } = standaloneSettingsSource(dir, {})
+    try {
+      await settings.writingStyles.save({
+        name: 'Plain',
+        description: '',
+        text: 'Write plainly.',
+        statusCard: false
+      })
+      await settings.writingStyles.setDefault('plain')
+      expect(launchStyle(undefined)).toEqual({
+        ok: true,
+        style: { id: 'plain', text: 'Write plainly.' }
+      })
+    } finally {
+      shutdown()
+      setWritingStylesSource(null)
     }
   })
 })

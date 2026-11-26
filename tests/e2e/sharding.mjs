@@ -60,6 +60,7 @@ export function parseRunArgs(args) {
 // These specs use the host's real pasteboard. Keep them sequential even when
 // several workers share one Mac; fixture namespaces cannot isolate a clipboard.
 export const CLIPBOARD_SPECS = new Set([
+  'chat-status-card.spec.mjs',
   'chat-view.spec.mjs',
   'chat-turn-copy.spec.mjs',
   'copy-contents.spec.mjs',

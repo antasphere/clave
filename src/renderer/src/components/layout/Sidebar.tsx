@@ -1342,6 +1342,7 @@ export function Sidebar(): React.JSX.Element {
             launchProfileId: sessionInfo.launchProfileId,
             piProvider: sessionInfo.piProvider,
             piThinking: sessionInfo.piThinking,
+            writingStyle: sessionInfo.writingStyle,
             ...(dupClaudeKind ? accountSessionFields(session) : {}),
             ...(session.codexMode ? codexAccountSessionFields(session) : {}),
             // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
@@ -1417,6 +1418,7 @@ export function Sidebar(): React.JSX.Element {
           launchProfileId: sessionInfo.launchProfileId,
           piProvider: sessionInfo.piProvider,
           piThinking: sessionInfo.piThinking,
+          writingStyle: sessionInfo.writingStyle,
           ...(isPi ? {} : accountSessionFields(session)),
           // Lane C of the harness wave (PRDCT-4496): the stored connection a Pi or OpenCode tab runs on
           ...connectionSessionFields(session),
