@@ -22,8 +22,10 @@
  *     what it sends;
  *  3. one project: two Quill tabs grouped by the keymap are « Group N » at
  *     once, then « Quill »; one request per tab, each body carrying the tab's
- *     own first message, no absolute path anywhere, relative folder keys and
- *     the three projects as the criteria;
+ *     own first message, no absolute path anywhere (the message's paths in a
+ *     home folder stand after a space, a file mention's `@`, curly quotes and
+ *     `**`: no `/Users/` reaches the stub), relative folder keys and the three
+ *     projects as the criteria;
  *  4. two projects (grouped from the sidebar's menu): « Atlas | Quill », the
  *     larger mean share first, which is not the tabs' order;
  *  5. a close call (0.63 / 0.23): the name stays, two chips with the shares,
@@ -363,6 +365,11 @@ export async function run(t) {
       const text = r.raw
       const leaks = absoluteMarks().filter((mark) => text.includes(mark))
       t.equal(`3. request ${i + 1}: no absolute path anywhere in the body`, leaks.join(' '), '')
+      t.check(
+        `3. request ${i + 1}: no /Users/ in the body, after a mention’s @, between curly quotes and in **…** alike`,
+        !text.includes('/Users/'),
+        firstOf(r)
+      )
       t.check(
         `3. request ${i + 1}: under the good key’s bearer, on the versioned model`,
         r.authOk && r.body?.model === MODEL,

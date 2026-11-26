@@ -7,6 +7,26 @@ import { clip, scrubPaths, scrubText } from './scrub'
 
 const context = { workspaceRoot: '/Users/ada/w', home: '/Users/ada' }
 
+/** Every printable ASCII character, then the quotes, the arrow and the marks
+ *  of prose, and a no-break space: what may stand before a path. */
+const BEFORE = [
+  ...Array.from({ length: 0x7e - 0x20 + 1 }, (_, i) => String.fromCharCode(0x20 + i)),
+  '“',
+  '”',
+  '‘',
+  '’',
+  '«',
+  '»',
+  '→',
+  '…',
+  '·',
+  // A no-break space.
+  String.fromCharCode(0xa0)
+]
+/** What a path never starts after: inside a word, a number or a path. (A
+ *  `~` right before a `/` makes a path of its own, in the home folder.) */
+const INSIDE = /^[A-Za-z0-9/.-]$/
+
 describe('clip', () => {
   it('collapses whitespace and cuts with a final ellipsis, the ellipsis counted', () => {
     expect(clip('  a\n\n b\tc  ', 10)).toBe('a b c')
@@ -26,6 +46,13 @@ describe('scrubText', () => {
     expect(scrubPaths('see /Users/ada/w/atlas.', context)).toBe('see atlas.')
     // A `~/…` path is read from the home folder: inside the workspace, relative.
     expect(scrubPaths('cd ~/w/labs/quill please', context)).toBe('cd labs/quill please')
+    // The root starts where any path does: after `_` and `@` too.
+    expect(scrubText('see _/Users/ada/w/quill/src/ink.ts_ now', context)).toBe(
+      'see _quill/src/ink.ts_ now'
+    )
+    expect(scrubText('Read @/Users/ada/w/quill/src/ink.ts first', context)).toBe(
+      'Read @quill/src/ink.ts first'
+    )
   })
 
   it('2. a file:// link takes the same rules on its path', () => {
@@ -71,6 +98,32 @@ describe('scrubText', () => {
     )
   })
 
+  it('3. a path starts after a mention’s `@`, any quote, `**`, `_`, `!` or `→`', () => {
+    expect(scrubText('Compare @/srv/tern/brief.pdf with @quill/src/ink.ts', context)).toBe(
+      'Compare @<path> with @quill/src/ink.ts'
+    )
+    expect(
+      scrubText('“~/Clients/Tern/notes.md” and ‘/srv/tern/a’ and «/srv/tern/b»', context)
+    ).toBe('“<path> and ‘<path> and «<path>')
+    expect(
+      scrubText('the **/srv/tern/c** one, _/srv/tern/d_, !/srv/tern/e →/srv/tern/f', context)
+    ).toBe('the **<path> one, _<path>, !<path> →<path>')
+    // `~name/…` is another account's home: outside, whoever it is.
+    expect(scrubText('see ~lumen/notes/todo.md and ~/w/quill/a.ts', context)).toBe(
+      'see <path> and quill/a.ts'
+    )
+    expect(scrubText('_C:\\Clients\\tern.pdf', context)).toBe('_<path>')
+  })
+
+  it('3. where a path starts, character by character: anywhere but inside a word, a number or a path', () => {
+    expect(BEFORE).toHaveLength(95 + 10)
+    for (const c of BEFORE) {
+      const text = `see ${c}/srv/tern/x.pdf now`
+      const expected = c === '~' ? 'see <path> now' : INSIDE.test(c) ? text : `see ${c}<path> now`
+      expect(scrubText(text, context), JSON.stringify(c)).toBe(expected)
+    }
+  })
+
   it('leaves a slash command, a fraction, a date, « and/or » and a plain link as they are', () => {
     for (const text of [
       '/clear',
@@ -80,6 +133,9 @@ describe('scrubText', () => {
       'due on 11/25/2026',
       'tests and/or docs',
       'labs/quill/src/a.ts',
+      './a/b',
+      '../a/b',
+      'mention @quill/src/ink.ts',
       'see https://atlas.example.com and https://lumen.example/ too.',
       'C:\\ alone'
     ])
@@ -116,6 +172,83 @@ describe('scrubText', () => {
     expect(scrubText('write to ada.quill+x@atlas.example.org please', context)).toBe(
       'write to <email> please'
     )
+  })
+
+  it('6. last, a home folder left becomes <path> with the rest of its path, wherever it stands', () => {
+    // After a letter or a digit, where no path starts.
+    expect(scrubText('see x/Users/ada/Clients/Tern/brief.pdf now', context)).toBe('see x<path> now')
+    expect(scrubText('copied to backup/home/lumen/.config/x.', context)).toBe(
+      'copied to backup<path>.'
+    )
+    expect(scrubText('v2.0/Users/bob/notes', context)).toBe('v2.0<path>')
+    // Windows writes it with `\`, on a drive or not.
+    expect(scrubText('see \\Users\\ada\\notes.txt and xC:\\Users\\bob\\a.txt', context)).toBe(
+      'see <path> and xC:<path>'
+    )
+    // The home folder itself wherever it is; a name that only starts like
+    // its own is another folder.
+    const elsewhere = { workspaceRoot: '/srv/w', home: '/var/lumen' }
+    expect(scrubText('logs in x/var/lumen/logs/a.log, not x/var/lumens/b', elsewhere)).toBe(
+      'logs in x<path>, not x/var/lumens/b'
+    )
+    // The price of the guarantee: a relative path through a folder `home`.
+    expect(scrubText('fix web/home/page.tsx', context)).toBe('fix web<path>')
+  })
+
+  it('6. whatever character stands before a home folder’s path, the name never leaves', () => {
+    for (const c of BEFORE) {
+      const out = scrubText(`see ${c}/Users/ada/Clients/x.pdf now`, context)
+      expect(out, JSON.stringify(c)).not.toContain('ada')
+      // Every character but the path's own is kept.
+      expect(out, JSON.stringify(c)).toBe(c === '~' ? 'see <path> now' : `see ${c}<path> now`)
+    }
+  })
+
+  it('sends no `/Users/` and no user name for any text that left whole in round 2', () => {
+    const probes: Array<[string, string | null]> = [
+      [
+        'Open file:///Users/ada/w/quill/dist/index.html in the browser',
+        'Open quill/dist/index.html in the browser'
+      ],
+      ['Open file:///Users/ada/Clients/AcmeCorp/brief.pdf', 'Open <path>'],
+      [
+        'Saved to /Volumes/Ada Backup/acme-contract.pdf',
+        'Saved to <path> Backup/acme-contract.pdf'
+      ],
+      ['logs in /private/var/folders/xy/T/acme-run/out.log', 'logs in <path>'],
+      [
+        'see ~/Clients/AcmeCorp/notes.md and /Users/ada/Clients/AcmeCorp/brief.pdf',
+        'see <path> and <path>'
+      ],
+      ['curl http://admin:hunter2pass@localhost:8080/api', 'curl http://localhost:8080/…'],
+      ['Open “/Users/ada/Clients/AcmeCorp/brief.pdf” please', 'Open “<path> please'],
+      ['Regarde «/Users/ada/Clients/AcmeCorp/brief.pdf»', 'Regarde «<path>'],
+      ['The file is **/Users/ada/Clients/AcmeCorp/brief.pdf** now', 'The file is **<path> now'],
+      ['Moved it →/Users/ada/Clients/AcmeCorp/brief.pdf', 'Moved it →<path>'],
+      [
+        'paths: _/Users/ada/Clients/AcmeCorp/x_ and !/Users/ada/Clients/AcmeCorp/y',
+        'paths: _<path> and !<path>'
+      ],
+      ['Use ‘/Users/ada/Clients/AcmeCorp/brief.pdf’', 'Use ‘<path>'],
+      [
+        'In ~/Clients/AcmeCorp/brief.pdf, and “~/Clients/AcmeCorp/notes.md”',
+        'In <path>, and “<path>'
+      ],
+      // Climbs out of the workspace with `..`: it leaves relative, no name in it.
+      ['inside /Users/ada/w/../Clients/AcmeCorp/brief.pdf', null],
+      [
+        'Compare @/Users/ada/Clients/AcmeCorp/brief.pdf with @quill/src/ink.ts',
+        'Compare @<path> with @quill/src/ink.ts'
+      ],
+      ['Read @/Users/ada/w/quill/src/ink.ts first', 'Read @quill/src/ink.ts first'],
+      ['see ~ada/notes/todo.md', 'see <path>']
+    ]
+    for (const [text, sent] of probes) {
+      const out = scrubText(text, context)
+      if (sent !== null) expect(out, text).toBe(sent)
+      expect(out, text).not.toContain('/Users/')
+      expect(out, text).not.toContain('ada')
+    }
   })
 
   it('applies every rule to one text, in their order', () => {

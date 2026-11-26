@@ -55,9 +55,10 @@ const slugOf = (name) =>
     .replace(/^-+|-+$/g, '')
 
 /** A Quill tab's first message as it must leave the machine: the workspace's
- *  path relative, the path in a home folder dropped (`SAY.quill`). */
+ *  path relative, every path in a home folder dropped wherever it stands, a
+ *  closing curly quote or `**` with it (`SAY.quill`, `src/main/decisions/scrub.ts`). */
 export const sentFirst = (n) =>
-  `Quill ${n}: the ink parser in quill/src/ink.ts drops the heading after a table. My notes are in <path>, read them first.`
+  `Quill ${n}: the ink parser in quill/src/ink.ts drops the heading after a table. My notes are in <path>, read them first. Compare @<path> with the brief “<path> and the list in **<path>.`
 
 /** The paths, the workspace and the tabs' words of one fixture, under the
  *  run's namespace (`name` keeps two users of it apart). */
@@ -77,12 +78,13 @@ export function jevWorld(name) {
   const P = (rel) => path.join(ROOT, rel)
 
   /** What each kind of tab said and touched. A Quill tab names an absolute
-   *  path of the workspace and one in a home folder in its FIRST message:
-   *  the app makes the first relative and drops the second before anything
-   *  leaves. */
+   *  path of the workspace in its FIRST message, and four in a home folder:
+   *  one after a space, one after a file mention's `@`, one between curly
+   *  quotes and one in Markdown bold. The app makes the first relative and
+   *  drops the others before anything leaves. */
   const SAY = {
     quill: (n) => ({
-      first: `Quill ${n}: the ink parser in ${P('quill/src/ink.ts')} drops the heading after a table. My notes are in /Users/ada/notes/quill.md, read them first.`,
+      first: `Quill ${n}: the ink parser in ${P('quill/src/ink.ts')} drops the heading after a table. My notes are in /Users/ada/notes/quill.md, read them first. Compare @/Users/ada/notes/margins.md with the brief “/Users/ada/Clients/Tern/brief.pdf” and the list in **/Users/ada/notes/headings.md**.`,
       latest: [`Run the ink tests again in ${P('quill')}.`],
       touched: [P('quill/src/ink.ts'), P('quill/src/ink.ts'), P('quill/README.md')]
     }),

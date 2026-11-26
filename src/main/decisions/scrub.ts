@@ -10,22 +10,37 @@
  *    the relative path alone, outside it `<path>`;
  * 3. any other absolute path becomes `<path>`. The home folder is outside
  *    the workspace, so nothing of it leaves either (a `~/…` path is read from
- *    it, by rules 1 and 3). On POSIX, a path is a `/` at a boundary (the
- *    start, a space, a quote, a bracket, `=`, `:`, `,`, `;`, `|`, `&`)
- *    followed by at least two components (`/a/b`), so a slash command
- *    (`/clear`, `/exos:lane clave 42`), a fraction, a date (`11/25/2026`),
- *    « and/or » and a link's own path are never taken; on Windows, `X:\` or
- *    `X:/` followed by a component;
+ *    it, by rules 1 and 3; a `~name/…` path, another account's home as far
+ *    as the scrub can tell, is `<path>`). On POSIX, a path is a `/` followed
+ *    by at least two components (`/a/b`); on Windows, `X:\` or `X:/` followed
+ *    by a component. A path, the workspace's root of rule 1 included, starts
+ *    at its first character unless that character follows a letter, a digit,
+ *    `/`, `.`, `-` or `~`, that is unless it sits inside a word, a number or
+ *    another path: after a space, a quote of any kind, `@`, `**`, `_`, `!`,
+ *    `→` or any other character, it is taken. So a slash command (`/clear`,
+ *    `/exos:lane clave 42`), a fraction, a date (`11/25/2026`), « and/or »,
+ *    `./a/b`, `../a/b` and a link's own path (the link is found first) are
+ *    never taken;
  * 4. a link keeps its scheme and its host (and port) and loses its user, its
  *    password and everything after the host (`http://localhost:8080/…`); a
  *    link with nothing after its host is left as it is;
  * 5. JWTs, e-mail addresses and token-like runs are taken out, with the
- *    measurement kit's patterns.
+ *    measurement kit's patterns;
+ * 6. last, the guarantee, whatever the starts of rules 1 to 3 let through:
+ *    any occurrence left of the person's home folder, and any `/Users/<name>`
+ *    or `/home/<name>` segment (`\Users\<name>` and `\home\<name>` too),
+ *    wherever it stands, becomes `<path>` with the rest of its path. No user
+ *    name leaves, whatever stands before it. The price: a relative path
+ *    through a folder named `home` loses what follows it
+ *    (`web/home/page.tsx` leaves as `web<path>`).
  *
  * The links are found together with the paths, so a path inside a link is
- * the link's. A limit: a path is cut at a space, so a folder with a space in
- * its name (`/Volumes/Ada Backup/notes.md`) becomes `<path>` up to the space,
- * and what follows it (` Backup/notes.md`) stays. Pure: no process, no file.
+ * the link's. Two limits: a path is cut at a space, so a folder with a space
+ * in its name (`/Volumes/Ada Backup/notes.md`) becomes `<path>` up to the
+ * space, and what follows it (` Backup/notes.md`) stays; and a path ends at
+ * a space, an ASCII quote or a bracket, so a closing curly quote, `»` or
+ * `**` right after it goes with it (`“/a/b”` leaves as `“<path>`). Pure: no
+ * process, no file.
  */
 
 /** Whitespace collapsed to single spaces, cut at `limit` characters with a
@@ -54,20 +69,30 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/
  *  or a `:` that starts another path (`/opt/a/bin:/opt/b/bin`). */
 const PART = String.raw`(?:[^/\s"'\`()\[\]{}<>:]|:(?!/))+`
 const WINDOWS_PART = String.raw`(?:[^\\/\s"'\`()\[\]{}<>:]|:(?![\\/]))+`
-/** Where a path outside the workspace may start (rule 3). */
-const BOUNDARY = String.raw`(?<=^|[\s"'\`()\[\]{}<>=:,;|&])`
-/** Where the workspace's root may start (rule 1): anywhere but inside a
- *  word or another path. */
-const ROOT_START = String.raw`(?<![\w/.~-])`
+/** Where a path may start, the workspace's root (rule 1) and any other
+ *  (rule 3) alike: anywhere but after a letter, a digit, `/`, `.`, `-` or
+ *  `~`, that is inside a word, a number or another path. Nothing else keeps
+ *  a path whole: not an underscore, a curly quote, `@` nor `*`. */
+const START = String.raw`(?<![A-Za-z0-9/.~-])`
 /** What may follow the root's own name: its end, a separator, a space. */
 const ROOT_END = String.raw`(?=$|[/\s"'<>()\[\]{}\`,;:!?.])`
 
 /** A link: a scheme, `://`, and the rest up to a space, a quote or a closing
  *  bracket (rules 2 and 4). */
 const LINK = String.raw`(?<![A-Za-z0-9+.-])(?<scheme>[A-Za-z][A-Za-z0-9+.-]*):\/\/(?<link>[^\s"'<>)\`]*)`
-const WINDOWS = String.raw`${BOUNDARY}(?<windows>[A-Za-z]:[\\/]+${WINDOWS_PART}(?:[\\/]+${WINDOWS_PART})*[\\/]*)`
-const TILDE = String.raw`${BOUNDARY}~(?<tilde>(?:/+${PART})+/*)`
-const POSIX = String.raw`${BOUNDARY}(?<posix>/${PART}(?:/+${PART})+/*)`
+const WINDOWS = String.raw`${START}(?<windows>[A-Za-z]:[\\/]+${WINDOWS_PART}(?:[\\/]+${WINDOWS_PART})*[\\/]*)`
+/** `~/…`, or `~name/…`: the home of the account `name`. */
+const TILDE = String.raw`${START}~(?<user>[A-Za-z_][\w.-]*)?(?<tilde>(?:/+${PART})+/*)`
+const POSIX = String.raw`${START}(?<posix>/${PART}(?:/+${PART})+/*)`
+
+/** A home folder's segment as the systems write it (rule 6): `/Users/<name>`,
+ *  `/home/<name>`, and the same with `\` (`C:\Users\<name>`, a WSL home). */
+const HOME_SEGMENT = String.raw`[\\/](?:Users|home)[\\/]+${WINDOWS_PART}`
+/** The rest of a path after a home folder, on either separator (rule 6). */
+const HOME_REST = String.raw`(?:[\\/]+${WINDOWS_PART})*[\\/]*`
+/** A name that goes on past the home folder's own (`/srv/adam` is not the
+ *  home `/srv/ada`). */
+const NAME_GOES_ON = String.raw`[A-Za-z0-9_-]`
 
 export const JWT_PATTERN = /eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g
 export const EMAIL_PATTERN = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g
@@ -118,7 +143,7 @@ export function scrubPaths(text: string, context: ScrubContext): string {
     return absolute.slice(root.length).replace(/^\/+/, '') || '.'
   }
   const workspace = root
-    ? String.raw`${ROOT_START}(?<root>${escapeRegExp(root)})${ROOT_END}(?<rest>(?:/+${PART})*/*)`
+    ? String.raw`${START}(?<root>${escapeRegExp(root)})${ROOT_END}(?<rest>(?:/+${PART})*/*)`
     : null
   const pattern = new RegExp(
     [LINK, ...(workspace ? [workspace] : []), WINDOWS, TILDE, POSIX].join('|'),
@@ -133,7 +158,10 @@ export function scrubPaths(text: string, context: ScrubContext): string {
     }
     if (groups.tilde !== undefined) {
       const [rest, trailing] = splitTrailing(groups.tilde)
-      const resolved = home.startsWith('/') ? inside(`${home}${rest}`) : null
+      // Another account's home is outside the workspace as far as the
+      // scrub can tell: only `~/…` is read from the home folder.
+      const resolved =
+        groups.user === undefined && home.startsWith('/') ? inside(`${home}${rest}`) : null
       return `${resolved ?? PATH_MARK}${trailing}`
     }
     const outside = groups.windows ?? groups.posix
@@ -142,11 +170,26 @@ export function scrubPaths(text: string, context: ScrubContext): string {
   })
 }
 
-/** Every rule, in order: the paths and the links, then JWT, e-mail, token.
- *  Pure. */
+/** Rule 6, the last: any occurrence left of the home folder, and any home
+ *  folder's segment, wherever it stands, becomes `<path>` with the rest of
+ *  its path, so no user name leaves whatever a start of the rules before
+ *  missed. Pure. */
+export function scrubHomes(text: string, context: ScrubContext): string {
+  const home = context.home.replace(/[\\/]+$/, '')
+  const forms = [HOME_SEGMENT]
+  // The home folder itself, wherever it is (`/var/root`, `/srv/ada`).
+  if (home.length > 1 && /^(?:[A-Za-z]:)?[\\/]/.test(home))
+    forms.push(String.raw`${escapeRegExp(home)}(?!${NAME_GOES_ON})`)
+  const pattern = new RegExp(String.raw`(?:${forms.join('|')})${HOME_REST}`, 'g')
+  return text.replace(pattern, (whole: string) => `${PATH_MARK}${splitTrailing(whole)[1]}`)
+}
+
+/** Every rule, in order: the paths and the links, then JWT, e-mail, token,
+ *  and last the home folders left. Pure. */
 export function scrubText(text: string, context: ScrubContext): string {
-  return scrubPaths(text, context)
+  const scrubbed = scrubPaths(text, context)
     .replace(JWT_PATTERN, '<token>')
     .replace(EMAIL_PATTERN, '<email>')
     .replace(TOKEN_PATTERN, '<token>')
+  return scrubHomes(scrubbed, context)
 }
