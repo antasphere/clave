@@ -17,6 +17,7 @@ import type {
 } from '@clave/contract/artefacts/model'
 import { cn } from '@clave/ui/components'
 import { initArtefacts, useArtefactStore } from '../../store/artefact-store'
+import { useSessionStore } from '../../store/session-store'
 import {
   actionOf,
   behindLine,
@@ -50,7 +51,8 @@ import {
  * wraps it with the server's notice), the machine a prop.
  *
  * On open the plain listing is drawn at once, then each sign-in is tried on
- * its site (`--check`); Refresh tries them again. Each site is a row keyed by
+ * its site (`--check`), and again whenever the Settings view is shown again
+ * (it stays mounted under the others); Refresh tries them again. Each site is a row keyed by
  * its origin, saying only what is known of it, with the one action its fix
  * offers: a sign-in with an e-mail code, a key to paste, a check, a removal.
  * A sign-in code and a key live in the form that asks for them and nowhere
@@ -177,6 +179,16 @@ function AccountsPage({
   live: boolean
 }): ReactElement {
   const view = useAccounts(machine, live)
+  // The Settings view stays mounted while another is shown: shown again, the
+  // page lists and checks again, as on open, its open forms kept.
+  const shown = useSessionStore((s) => s.activeView === 'settings')
+  const wasShown = useRef(shown)
+  const { reload } = view
+  useEffect(() => {
+    const before = wasShown.current
+    wasShown.current = shown
+    if (shown && !before && live) void reload()
+  }, [shown, live, reload])
   return (
     <SettingsPage
       title="Slideless"

@@ -303,11 +303,12 @@ export async function run(t) {
     await page.waitFor({ state: 'visible', timeout: 10000 })
     return page
   }
+  // The Settings view stays mounted under the sessions: it is hidden, not gone.
   const toSessions = async () => {
     await win.locator('[aria-label="Back to sessions"]').click()
     await win
       .locator('[data-settings-page="slideless"]')
-      .waitFor({ state: 'detached', timeout: 5000 })
+      .waitFor({ state: 'hidden', timeout: 5000 })
   }
   const newLinksOnServer = async (origin) =>
     until(async () => {
@@ -691,7 +692,13 @@ export async function run(t) {
     )
     await closeDialog()
 
+    const beforeBack = mark()
     await toSlideless()
+    t.check(
+      '6. Settings shown again: the page lists and checks the sites again, as on open',
+      !!(await until(() => journal(beforeBack).some((call) => has(call, 'profiles', '--check')))),
+      journal(beforeBack).map((call) => call.argv)
+    )
     await pick(win, page.locator('[data-settings-select="slideless-new-links"]'), 'Cloud')
     t.check('6. « New links go to » changed to the cloud', !!(await newLinksOnServer(CLOUD)))
     await toSessions()
