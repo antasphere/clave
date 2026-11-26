@@ -651,6 +651,29 @@ describe('the publish to Slideless (PRDCT-4149)', () => {
     expect(runOf(service, id).published).toBeUndefined()
   })
 
+  it('keeps what the publisher writes before its push, even when the push then fails (PRDCT-4266)', async () => {
+    const host = fakeHost()
+    const file = workspace([published])
+    const states: PublishInput['state'][] = []
+    const found = { deckId: 'deck-old', share: null, site: 'https://cloud.example.test' }
+    const publisher = {
+      publish: async (input: PublishInput): Promise<PublishOutcome> => {
+        states.push(input.state)
+        input.save(found)
+        throw new PublishFailure('the deck was not pushed: quota reached')
+      }
+    }
+    const service = await build(file, host, memory(), { publisher })
+    const first = await reportedRun(service, host, file, 's1')
+    await vi.waitFor(() =>
+      expect(runOf(service, first).publishError).toBe('the deck was not pushed: quota reached')
+    )
+    // The next run's publish starts from the record the first one wrote.
+    await reportedRun(service, host, file, 's2')
+    await vi.waitFor(() => expect(states).toHaveLength(2))
+    expect(states).toEqual([null, found])
+  })
+
   it('says no publisher runs in this process when the server has none', async () => {
     for (const publisher of [false as const, undefined]) {
       const host = fakeHost()

@@ -586,7 +586,9 @@ export function createRoutineService(options: RoutineServiceOptions): RoutineSer
             folder,
             title: d.name,
             state: store.publishState(d.key),
-            shareName: `${SHARE_NAME_PREFIX} · ${d.name} · ${options.identity().name}`
+            shareName: `${SHARE_NAME_PREFIX} · ${d.name} · ${options.identity().name}`,
+            // The site a look by id found, kept even when the push then fails (PRDCT-4266).
+            save: (state) => store.setPublishState(d.key, state)
           })
           store.setPublishState(d.key, outcome.state)
           store.updateRun(runId, {

@@ -109,6 +109,52 @@ describe('RoutinesStore', () => {
     expect(new RoutinesStore(storage).publishState('k')).toEqual(state)
   })
 
+  it("keeps the site of a routine's deck, and reads a record written before records named one (PRDCT-4266)", () => {
+    const storage = memory()
+    const store = new RoutinesStore(storage)
+    const state = {
+      deckId: 'deck-1',
+      share: { tokenId: 't-1', url: 'https://s.example/d/1' },
+      site: 'https://decks.example.test'
+    }
+    store.setPublishState('k', state)
+    expect(new RoutinesStore(storage).publishState('k')).toEqual(state)
+    // An older release's document: the deck and its link, no site.
+    storage.write(
+      STORE_FILE,
+      JSON.stringify({
+        version: 1,
+        viewerPort: null,
+        routines: {
+          old: {
+            lastConsideredAt: null,
+            schedule: null,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+            runs: [],
+            publish: { deckId: 'deck-old', share: { tokenId: 't-0', url: 'https://s.example/d/0' } }
+          }
+        }
+      })
+    )
+    const older = new RoutinesStore(storage)
+    expect(older.publishState('old')).toEqual({
+      deckId: 'deck-old',
+      share: { tokenId: 't-0', url: 'https://s.example/d/0' }
+    })
+    expect(older.publishState('old')?.site).toBeUndefined()
+    // The site found for it later is written beside what it had.
+    older.setPublishState('old', {
+      ...older.publishState('old')!,
+      site: 'https://cloud.example.test'
+    })
+    expect(new RoutinesStore(storage).publishState('old')).toEqual({
+      deckId: 'deck-old',
+      share: { tokenId: 't-0', url: 'https://s.example/d/0' },
+      site: 'https://cloud.example.test'
+    })
+  })
+
   it("forgets a pruned routine's publish state with the routine", () => {
     let now = 0
     const store = new RoutinesStore(memory(), () => now)

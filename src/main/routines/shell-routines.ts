@@ -20,7 +20,6 @@ import { rememberedSpawnModel } from '../sessions/spawn-model'
 import { preferencesManager, type Preferences } from '../preferences-manager'
 import { workspaceManager } from '../workspace-manager'
 import { ptyManager } from '../pty-manager'
-import { loginShellEnvAsync } from '../sessions/adapters/pty-backend'
 import { getSessionHost } from '../sessions/host'
 import { sessionWindows } from '../sessions/windows'
 import { installE2eHooks } from '../sessions/e2e-hooks'
@@ -32,6 +31,7 @@ import { TEST_NO_ACTIVATE } from '../test-mode'
 import { waitForMcpRuntime } from '../mcp/mcp-runtime'
 import { viewerCommand } from '../artefacts/slideless-viewer-command'
 import { launchFactsFromManagers } from './facts'
+import { ownSlideless } from './own-slideless'
 import { SlidelessPublisher } from './publisher'
 import { createRoutineService, type RoutineService } from './service'
 import { contractPluginDir, defaultReportDir } from './skill'
@@ -86,10 +86,12 @@ export function shellRoutines(): RoutineService {
     // in-process server's id once it listens, and the machine's own name
     // unless the environment gives one (the e2e harness does).
     identity: () => ({ id: claveServerId() ?? '', name: ownServerName() }),
+    // The copy the in-process artefact service installs under user data, run by
+    // this process's own binary as Node, on the sites of this Mac (PRDCT-4266).
     publisher: TEST_NO_ACTIVATE
       ? false
       : new SlidelessPublisher({
-          env: () => loginShellEnvAsync(),
+          ...ownSlideless({ dataDir: userData, execPath: process.execPath, env: process.env }),
           log: (level, message) =>
             (level === 'warn' ? console.warn : console.log)(`[routines] ${message}`)
         }),

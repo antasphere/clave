@@ -30,6 +30,10 @@ export interface RoutineState {
 export interface RoutinePublishState {
   deckId: string
   share: { tokenId: string; url: string } | null
+  /** The Slideless site the deck is on, an origin in normal form (`normalOrigin`,
+   *  PRDCT-4266). A record written before records named their site has none:
+   *  the publisher looks for the deck by its id and writes the site it finds. */
+  site?: string
 }
 
 export interface RoutinesDocument {

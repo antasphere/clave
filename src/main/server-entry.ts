@@ -99,6 +99,7 @@ import { standaloneSettingsSource } from './settings/standalone-source'
 // ── ADR 0004: the routines, this server's own scheduler ──
 import * as os from 'node:os'
 import { createRoutineService } from './routines/service'
+import { ownSlideless } from './routines/own-slideless'
 import { SlidelessPublisher } from './routines/publisher'
 import { ownServerName } from './server/server-name'
 import { launchFactsFromManagers } from './routines/facts'
@@ -519,10 +520,17 @@ async function main(): Promise<void> {
     pluginDir: contractPluginDir(RESOURCES_DIR),
     defaultTemplate: defaultReportDir(RESOURCES_DIR),
     identity: () => ({ id: identity?.serverId ?? listeningServerId ?? '', name: serverName() }),
+    // This server's own copy under its data folder, run by the Node its
+    // artefact service gets, on the sites of this machine (PRDCT-4266).
     publisher: TEST_NO_ACTIVATE
       ? false
       : new SlidelessPublisher({
-          env: () => loginShellEnvAsync(),
+          ...ownSlideless({
+            dataDir,
+            execPath: slidelessNode,
+            env: process.env,
+            log: (line) => process.stderr.write(`clave-server: ${line}\n`)
+          }),
           log: (level, message) =>
             process.stderr.write(`clave-server: routines ${level}: ${message}\n`)
         }),
