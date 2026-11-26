@@ -80,6 +80,17 @@ describe('the readers of the command’s answers', () => {
       expect(isGone({ code: 1, stderr: gone })).toBe(true)
   })
 
+  it('takes no « not found » looked for in another organization for a deck that is gone', () => {
+    for (const selected of ['SLIDELESS_ORG', 'the --org flag'])
+      expect(
+        isGone({
+          code: 1,
+          stderr: `Error: Presentation not found (looked in the organization "acme", selected by ${selected})\n`
+        })
+      ).toBe(false)
+    expect(isGone({ code: 1, stderr: 'Error: Presentation not found\n' })).toBe(true)
+  })
+
   it('say why a command failed by its `Error:` line, past a notice that it is older than its site', () => {
     const notice = 'This slideless (0.15.0) is older than https://decks.example.test (0.15.1).'
     expect(errorLine(`${notice}\nError: the key was refused\n`)).toBe('the key was refused')

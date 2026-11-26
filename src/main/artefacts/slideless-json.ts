@@ -90,20 +90,22 @@ export function parseSharedLink(stdout: string): SharedLink | null {
   }
 }
 
-/** What the command adds to a « not found » it looked for in one workspace. */
-const LOOKED_IN_A_WORKSPACE = '(looked in the workspace'
+/** What the command adds to a « not found » it looked for in the one
+ *  workspace or organization a selection named. */
+const LOOKED_IN_A_SELECTION = '(looked in the '
 
 /** Whether a refused push says the kept deck is gone (the instance's
  *  `not_found`, a 404, "no such deck"), the one refusal a new deck answers;
  *  a network error, a signed-out key or any other refusal is not that, and a
  *  new deck would orphan the link the person keeps (round 2, Minor 2). Nor is
- *  a « not found » in another workspace than the deck's: the command then says
- *  where it looked (`(looked in the workspace "…", selected by …)`), and the
- *  deck and its links are still there, in theirs. */
+ *  a « not found » in another workspace or organization than the deck's: the
+ *  command then says where it looked (`(looked in the workspace "…", selected
+ *  by …)`, `(looked in the organization "…", selected by …)`), and the deck and
+ *  its links are still there, in theirs. */
 export const isGone = (result: SlidelessExit): boolean =>
   result.errorCode !== 'ENOENT' &&
   result.code !== null &&
-  !result.stderr.includes(LOOKED_IN_A_WORKSPACE) &&
+  !result.stderr.includes(LOOKED_IN_A_SELECTION) &&
   // The CLI's refusal is on stderr; stdout may carry the deck's own id.
   /\b(not_found|not found|404|no such|does not exist|deleted)\b/i.test(result.stderr)
 
