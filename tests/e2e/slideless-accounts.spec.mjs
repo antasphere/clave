@@ -504,6 +504,7 @@ export async function run(t) {
     // ── 3. New links go to ──
     const newLinks = page.locator('[data-settings-select="slideless-new-links"]')
     t.equal('3. « New links go to » starts « Not chosen »', await text(newLinks), 'Not chosen')
+    const beforeNewLinks = mark()
     await pick(win, newLinks, 'Cloud')
     t.check(
       '3. « New links go to » set to the cloud is answered by the server',
@@ -513,6 +514,26 @@ export async function run(t) {
     t.check(
       '3. and the select shows it',
       !!(await until(async () => (await newLinks.getAttribute('data-value')) === CLOUD))
+    )
+    // The choice answers the plain listing: the page then checks every sign-in, as Refresh
+    // does, so a key the check refused never reads « Signed in » again.
+    t.check(
+      '3. … then the page checks every sign-in again (profiles --check), as Refresh does',
+      !!(await until(() =>
+        journal(beforeNewLinks).some((call) => has(call, 'profiles', '--check'))
+      )),
+      journal(beforeNewLinks).map((call) => call.argv)
+    )
+    // A line the page dropped is waited for briefly, so a red run still reaches the end.
+    t.check(
+      '3. … and every row keeps its check line',
+      !!(await until(
+        async () =>
+          (await text(line(DECKS, 'check'), 250)) === 'Answers as Some One' &&
+          (await text(line(LOCAL, 'check'), 250)) === 'No key to check',
+        40
+      )),
+      { decks: await text(line(DECKS, 'check')), local: await text(line(LOCAL, 'check')) }
     )
     // The decks site for the folder's first link.
     await pick(win, newLinks, 'Decks')
@@ -582,6 +603,7 @@ export async function run(t) {
     await local.locator('[data-slideless-signin-send]').click()
     await until(async () => (await codeField.count()) === 1, 150)
     await codeField.fill(CODE)
+    const beforeCode = mark()
     await local.locator('[data-slideless-signin-submit]').click()
     t.check(
       '4. the right code signs the row in, and the form goes',
@@ -592,6 +614,20 @@ export async function run(t) {
         150
       )),
       { state: await local.getAttribute('data-slideless-state'), row: await text(local) }
+    )
+    // A sign-in answers the plain listing: the page then checks every sign-in, as Refresh does.
+    t.check(
+      '4. … then the page checks every sign-in again (profiles --check), as Refresh does',
+      !!(await until(() => journal(beforeCode).some((call) => has(call, 'profiles', '--check')))),
+      journal(beforeCode).map((call) => call.argv)
+    )
+    t.check(
+      '4. … and the other rows keep their check lines',
+      !!(await until(
+        async () => (await text(line(DECKS, 'check'), 250)) === 'Answers as Some One',
+        40
+      )),
+      { decks: await text(line(DECKS, 'check')) }
     )
     t.equal(
       '4. the row says how it signs in now',
@@ -648,6 +684,20 @@ export async function run(t) {
       keyed.map((call) => call.argv)
     )
     t.equal('5. the input carried the key’s line', keyed[0]?.stdinSha256, sha256(`${KEY}\n`))
+    // A pasted key answers the plain listing: the page then checks every sign-in, as Refresh does.
+    t.check(
+      '5. … then the page checks every sign-in again (profiles --check), as Refresh does',
+      !!(await until(() => journal(beforeKey).some((call) => has(call, 'profiles', '--check')))),
+      journal(beforeKey).map((call) => call.argv)
+    )
+    t.check(
+      '5. … and the other rows keep their check lines',
+      !!(await until(
+        async () => (await text(line(DECKS, 'check'), 250)) === 'Answers as Some One',
+        40
+      )),
+      { decks: await text(line(DECKS, 'check')) }
+    )
 
     // ── 6. A folder artefact: a link on the decks site, then another on the same deck ──
     await toSessions()
@@ -965,6 +1015,18 @@ export async function run(t) {
       '11. the command’s own fix ran, at that site',
       removes.length === 1 && has(removes[0], 'dead') && optionOf(removes[0], '--api-url') === DEAD,
       removes.map((call) => call.argv)
+    )
+    // The removal answers the plain listing: the page then checks the sites left, as Refresh does.
+    t.check(
+      '11. … then the page checks the sites left (profiles --check), as Refresh does',
+      !!(await until(() => journal(beforeRemove).some((call) => has(call, 'profiles', '--check')))),
+      journal(beforeRemove).map((call) => call.argv)
+    )
+    const decksCheck = settings.locator(`[data-slideless-profile="${DECKS}"] [data-line="check"]`)
+    t.check(
+      '11. … and the rows left keep their check lines',
+      !!(await until(async () => (await text(decksCheck, 250)) === 'Answers as Some One', 40)),
+      { decks: await text(decksCheck) }
     )
 
     // ── 12. A folder whose link file names a site of no profile here ──

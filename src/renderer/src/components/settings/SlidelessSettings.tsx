@@ -221,7 +221,7 @@ function AccountsPage({
   )
 }
 
-/** Install the latest Slideless on the machine (the store's own install), then list again. */
+/** Install the latest Slideless on the machine (the store's own install), then list and check again, as on open. */
 function InstallLatest({
   view,
   compact = false
@@ -240,7 +240,7 @@ function InstallLatest({
     setError(null)
     try {
       await useArtefactStore.getState().install(owner)
-      await view.read()
+      await view.reload()
     } catch (failure) {
       setError(refusalText(failure))
     } finally {
@@ -369,6 +369,9 @@ function NewLinksSection({
     setError(null)
     try {
       await view.run(() => api().setNewLinksSite(origin, serverIdOf(view.machine)))
+      // The choice answers the plain listing: the page checks every sign-in again, as
+      // Refresh does, so a key its check refused never reads « Signed in » again.
+      void view.check()
     } catch (failure) {
       setError(refusalText(failure))
     } finally {
@@ -660,7 +663,8 @@ function SignInForm({
     flight.current = null
     if (answer.phase === 'done') {
       onClose()
-      void view.read()
+      // The sign-in answers its own row only: the page checks every sign-in again, as Refresh does.
+      void view.check()
     } else if (answer.phase === 'cancelled') onClose()
     else setStep({ step: 'failed', message: answer.message ?? 'Slideless did not sign in.' })
   }
@@ -905,6 +909,8 @@ function PasteKeyForm({
     try {
       await view.run(() => api().pasteSlidelessKey(origin, given, serverIdOf(view.machine)))
       onClose()
+      // The key answers the plain listing: the page checks every sign-in again, as Refresh does.
+      void view.check()
     } catch (failure) {
       setError(refusalText(failure))
     } finally {
@@ -979,6 +985,8 @@ function RemoveForm({
       await view.run(() =>
         api().runSlidelessFix(origin, 'remove_profile', serverIdOf(view.machine))
       )
+      // The removal answers the plain listing: the page checks the sites left, as Refresh does.
+      void view.check()
     } catch (failure) {
       setError(refusalText(failure))
       setBusy(false)
