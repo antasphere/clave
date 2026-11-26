@@ -2353,21 +2353,35 @@ canvas[data-orb-state] {
 /* ── Badges ── */
 
 /* A group's suggested projects after its name (PRDCT-5179,
-   SessionGroupItem.tsx): two quiet badges, the first thing to shrink away in
-   a narrow sidebar (the name keeps its room), taking the free space after
-   them so the group's own controls stay at the edge. */
+   SessionGroupItem.tsx): two quiet badges in the room the name leaves. The
+   box grows from nothing into the free space, so the name never gives up a
+   pixel to it (a shared shrink cut « Group 2 » to « Group … » beside half a
+   chip) and the group's own controls stay at the edge. It is one chip high
+   and its chips wrap: a chip that does not fit WHOLE goes to the second
+   line, which is never shown, so a narrow sidebar shows fewer chips, never
+   part of one. The zero-width first item lets the first chip wrap away too. */
 .group-suggestions {
-  display: inline-flex;
+  --group-chip-h: 1.125rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   align-items: center;
-  gap: 0.25rem;
-  flex: 0 1000 auto;
+  column-gap: 0.25rem;
+  flex: 1 1 0%;
   min-width: 0;
-  margin-right: auto;
+  height: var(--group-chip-h);
   overflow: hidden;
-  white-space: nowrap;
+}
+.group-suggestions::before {
+  content: '';
+  width: 0;
+  height: var(--group-chip-h);
+  margin-right: -0.25rem;
 }
 .group-suggestions > .badge {
   flex-shrink: 0;
+  height: var(--group-chip-h);
+  white-space: nowrap;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
@@ -2651,9 +2665,12 @@ canvas[data-orb-state] {
 }
 /* A callout or a second card that follows a card sits one row-gap step under
    it, owned here so no call site decides the distance (they used to: mt-2
-   on two of them, mt-3 on a third, nothing on the fourth). */
+   on two of them, mt-3 on a third, nothing on the fourth). A card under a
+   callout keeps the same step: the decisions' notice of a missing key sat
+   flush on their card (PRDCT-5179). */
 .settings-card + .settings-callout,
-.settings-card + .settings-card {
+.settings-card + .settings-card,
+.settings-callout + .settings-card {
   margin-top: 0.5rem;
 }
 /* The callout's actions: Cancel then the primary, right-aligned, on the
