@@ -207,6 +207,18 @@ export function defaultSite(accounts: SlidelessAccounts | null): string {
   return normalOrigin((chosen ?? accounts.profiles[0])?.site.origin ?? '')
 }
 
+export const FIRST_SITE_OFFERED =
+  '« New links go to » is not chosen in Settings › Slideless: the first site is offered.'
+
+/** The line under « Create link »'s site when it offers the listing's first
+ *  site only because « New links go to » is not chosen; null otherwise.
+ *  `chosen` is the site the dialog has a reason for (the person's pick, a
+ *  gone deck's own site), empty when it has none. */
+export function firstSiteNotice(accounts: SlidelessAccounts | null, chosen: string): string | null {
+  if (chosen !== '' || !accounts || accounts.newLinksSite !== null) return null
+  return accounts.profiles.length > 0 ? FIRST_SITE_OFFERED : null
+}
+
 export const PASSWORD_MIN = 4
 export const PASSWORD_TOO_SHORT = 'A password is at least 4 characters long.'
 

@@ -12,6 +12,7 @@ import type {
 } from '@clave/contract/artefacts/model'
 import {
   DEFAULT_LINK_FIELDS,
+  FIRST_SITE_OFFERED,
   PASSWORD_TOO_SHORT,
   actionOf,
   behindLine,
@@ -20,6 +21,7 @@ import {
   defaultSite,
   endOfDay,
   environmentLines,
+  firstSiteNotice,
   hostOf,
   linkFieldsProblem,
   linkSettings,
@@ -253,6 +255,22 @@ describe('« Create link »', () => {
     expect(defaultSite(listing(profiles, null))).toBe(DECKS)
     expect(defaultSite(listing([], CLOUD))).toBe('')
     expect(defaultSite(null)).toBe('')
+  })
+
+  it('says the first site is offered only because « New links go to » is not chosen', () => {
+    const profiles = [profile(), profile({ origin: CLOUD, name: 'Cloud' })]
+    expect(firstSiteNotice(listing(profiles, null), '')).toBe(
+      '« New links go to » is not chosen in Settings › Slideless: the first site is offered.'
+    )
+    expect(FIRST_SITE_OFFERED).toBe(firstSiteNotice(listing(profiles, null), ''))
+    // Chosen, even a site no longer listed: the line would not be true.
+    expect(firstSiteNotice(listing(profiles, CLOUD), '')).toBeNull()
+    expect(firstSiteNotice(listing(profiles, 'https://gone.example.test'), '')).toBeNull()
+    // A site the dialog has a reason for (the person's pick, a gone deck's site).
+    expect(firstSiteNotice(listing(profiles, null), DECKS)).toBeNull()
+    // Nothing offered, or nothing read yet.
+    expect(firstSiteNotice(listing([], null), '')).toBeNull()
+    expect(firstSiteNotice(null, '')).toBeNull()
   })
 
   it('sends the switches as they are and leaves out what was not given', () => {

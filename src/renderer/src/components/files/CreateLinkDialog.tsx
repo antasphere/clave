@@ -15,6 +15,7 @@ import {
   DEFAULT_LINK_FIELDS,
   dayAfter,
   defaultSite,
+  firstSiteNotice,
   linkFieldsProblem,
   linkSettings,
   normalOrigin,
@@ -143,6 +144,8 @@ export function CreateLinkDialog({
   const choosing = gone !== null || (deck !== null && deck.site === null && !deck.linkedFolder)
   const preferred = gone && profileAt(accounts, gone.site) ? normalOrigin(gone.site) : ''
   const site = picked || preferred || defaultSite(accounts)
+  // The listing's first site, offered only because « New links go to » is not chosen: said so.
+  const firstSite = firstSiteNotice(accounts, picked || preferred)
   const siteProfile = profileAt(accounts, site)
   const problem = linkFieldsProblem(fields)
   const set = <K extends keyof LinkFields>(key: K, value: LinkFields[K]): void =>
@@ -233,6 +236,11 @@ export function CreateLinkDialog({
         className="w-full"
         testId="create-link-site"
       />
+      {firstSite && (
+        <p className="mt-1.5 text-xs text-text-tertiary" data-create-link-first-site>
+          {firstSite}
+        </p>
+      )}
       {siteProfile?.signIn.state === 'needs_login' && (
         <p className="mt-1.5 flex flex-wrap items-center gap-2" data-create-link-sign-in>
           <span className="status-text" data-status="connecting">
