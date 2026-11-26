@@ -247,7 +247,10 @@ try {
     said(ra1)
   )
   if (both && rq3 && ra1) {
-    const first = rq3.names[0].share >= ra1.names[0].share ? 'Quill' : 'Atlas'
+    // The larger mean share first; equal shares in the order of their names
+    // (readGroupProjects): two tabs read at 1.0 each name « Atlas | Quill ».
+    const [quillShare, atlasShare] = [rq3.names[0].share, ra1.names[0].share]
+    const first = quillShare > atlasShare ? 'Quill' : 'Atlas'
     check('4. the larger mean share first', both.startsWith(first), {
       name: both,
       quill: rq3.names[0].share,
