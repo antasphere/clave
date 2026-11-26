@@ -20,6 +20,9 @@ export const MAX_RUNNING_DECISIONS = 4
  *  `retry-after`, else this, never more than `LIMIT_RETRY_CAP_MS`. */
 export const LIMIT_RETRY_DEFAULT_MS = 500
 export const LIMIT_RETRY_CAP_MS = 1500
+/** The pause before the declared model is asked once more after the service
+ *  said it does not know it (see `execute`). */
+export const MODEL_RETRY_MS = 250
 
 export type DecisionFailureReason =
   | 'no-key'
@@ -158,6 +161,7 @@ async function execute(job: Job): Promise<DecisionOutcome<unknown>> {
   const { definition } = job
   let model = definition.model
   let triedFallback = false
+  let retriedModel = false
   let retried = false
   let outcome: JevOutcome
   for (;;) {
@@ -181,6 +185,18 @@ async function execute(job: Job): Promise<DecisionOutcome<unknown>> {
     ) {
       triedFallback = true
       model = definition.fallbackModel
+      continue
+    }
+    // The service also refuses, now and then, a model it serves: measured on
+    // 26 November 2026, 3 of 16 requests on jev-1.14.0 answered « Unknown
+    // model », the alias once too, and each was answered on a later try. So
+    // once the fallback is refused as well (or there is none), the declared
+    // model is asked once more after a pause: three requests at most, and a
+    // refused request costs no token.
+    if (outcome.kind === 'model-gone' && !retriedModel) {
+      retriedModel = true
+      model = definition.model
+      await pause(MODEL_RETRY_MS, job.controller.signal)
       continue
     }
     if (outcome.kind === 'limit' && !retried) {

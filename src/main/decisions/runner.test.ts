@@ -15,6 +15,7 @@ import {
 import {
   cancelAll,
   MAX_RUNNING_DECISIONS,
+  MODEL_RETRY_MS,
   queuedDecisions,
   resetShutdownForTests,
   runDecision,
@@ -156,34 +157,59 @@ describe('runDecision', () => {
     })
   })
 
-  it('a model gone: ONE more request, on the fallback', async () => {
+  it('a model gone: one more request on the fallback', async () => {
     replies = [{ kind: 'model-gone' }, ok(0.9, 'jev-1.15.0')]
     expect(await runDecision(quill, 'a tab', options)).toMatchObject({
       ok: true,
       model: 'jev-1.15.0'
     })
     expect(asked.map((a) => a.model)).toEqual(['jev-1.14.0', 'jev-latest'])
+  })
+
+  it('the fallback refused too: the declared model once more, three requests at most', async () => {
+    // Measured on 26 November 2026: TypeSafe refuses a model it serves, now
+    // and then, and answers the same request a moment later.
+    replies = [{ kind: 'model-gone' }, { kind: 'model-gone' }, ok(0.9, 'jev-1.14.0')]
+    expect(await runDecision(quill, 'a tab', options)).toMatchObject({
+      ok: true,
+      model: 'jev-1.14.0'
+    })
+    expect(asked.map((a) => a.model)).toEqual(['jev-1.14.0', 'jev-latest', 'jev-1.14.0'])
     replies = [{ kind: 'model-gone' }]
     asked = []
     expect(await runDecision(quill, 'a tab', options)).toMatchObject({
       ok: false,
       reason: 'failed'
     })
-    expect(asked.map((a) => a.model)).toEqual(['jev-1.14.0', 'jev-latest'])
+    expect(asked.map((a) => a.model)).toEqual(['jev-1.14.0', 'jev-latest', 'jev-1.14.0'])
   })
 
-  it('a model gone with no fallback: failed after one request', async () => {
+  it('a model gone with no fallback: the same model once more, then failed', async () => {
     const atlas = defineDecision<string, number>({
       ...quill,
       id: 'atlas-fits',
       fallbackModel: undefined
     })
+    replies = [{ kind: 'model-gone' }, ok(0.9)]
+    expect(await runDecision(atlas, 'a tab', options)).toMatchObject({ ok: true })
+    expect(asked.map((a) => a.model)).toEqual(['jev-1.14.0', 'jev-1.14.0'])
     replies = [{ kind: 'model-gone' }]
+    asked = []
     expect(await runDecision(atlas, 'a tab', options)).toMatchObject({
       ok: false,
       reason: 'failed'
     })
-    expect(asked).toHaveLength(1)
+    expect(asked).toHaveLength(2)
+  })
+
+  it('a cancel during the pause before the model is asked again sends nothing more', async () => {
+    replies = [{ kind: 'model-gone' }, { kind: 'model-gone' }, ok()]
+    const running = runDecision(quill, 'a tab', options)
+    await vi.waitFor(() => expect(asked).toHaveLength(2))
+    cancelAll()
+    expect(await running).toMatchObject({ ok: false, reason: 'cancelled' })
+    await new Promise((resolve) => setTimeout(resolve, MODEL_RETRY_MS + 50))
+    expect(asked).toHaveLength(2)
   })
 
   it('a limit: ONE retry after the wait the service asks, capped, then limit', async () => {
