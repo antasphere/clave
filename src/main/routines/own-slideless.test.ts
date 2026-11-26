@@ -110,6 +110,18 @@ describe("the publisher's road to the server's own copy", () => {
     expect(calls.map((call) => call.args.slice(1))).toEqual([['--json', 'profiles']])
   })
 
+  it('lists every site the plain listing names, saved or not, for « New links go to »', async () => {
+    install('0.15.0')
+    const listing = listingJson([
+      listedProfile(DECKS),
+      { ...listedProfile('HTTPS://Implicit.Example.Test/', null, 'implicit'), saved: false }
+    ])
+    const { spawn, calls } = fakeSpawn(listing)
+    const own = ownSlideless({ dataDir, execPath: EXEC_PATH, env: ENV, spawn })
+    expect(await own.listedSites()).toEqual([DECKS, 'https://implicit.example.test'])
+    expect(calls.map((call) => call.args.slice(1))).toEqual([['--json', 'profiles']])
+  })
+
   it('lists no site with a copy too old to list them: the sentence an update cures', async () => {
     install('0.14.2')
     const own = ownSlideless({ dataDir, execPath: EXEC_PATH, env: ENV, spawn: fakeSpawn().spawn })

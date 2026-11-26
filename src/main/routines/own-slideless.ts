@@ -4,7 +4,7 @@
  * the `CLAVE_SLIDELESS_CLI` override), by the Node the server was told, in the server's own
  * environment (`runSlideless`); the machine's « New links go to » (`slideless-settings.json`
  * in the same folder, where the accounts write it); and the origins of the machine's saved
- * profiles, from the plain listing (`slideless-accounts.ts`). Both entries build their
+ * profiles, and of every site it lists, from the plain listing (`slideless-accounts.ts`). Both entries build their
  * publisher on it, over the folder and the Node their artefact service gets.
  */
 import { join } from 'node:path'
@@ -35,7 +35,7 @@ export interface OwnSlidelessDeps {
 
 export function ownSlideless(
   deps: OwnSlidelessDeps
-): Pick<PublisherOptions, 'run' | 'newLinksSite' | 'sites'> {
+): Pick<PublisherOptions, 'run' | 'newLinksSite' | 'sites' | 'listedSites'> {
   const cliDir = join(deps.dataDir, 'slideless', 'cli')
   /** The copy when it is ready to run, else the refusal that says why not: every call a
    *  routine makes to a site runs on the release that names its site (0.15.0), as the
@@ -69,6 +69,9 @@ export function ownSlideless(
     sites: async () =>
       (await accounts.listed()).profiles
         .filter((profile) => profile.saved)
-        .map((profile) => normalOrigin(profile.site.origin))
+        .map((profile) => normalOrigin(profile.site.origin)),
+    // Every site the listing names, saved or not (the implicit cloud): what « New links go to » may name.
+    listedSites: async () =>
+      (await accounts.listed()).profiles.map((profile) => normalOrigin(profile.site.origin))
   }
 }

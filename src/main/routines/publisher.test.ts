@@ -63,20 +63,26 @@ interface Harness {
   /** What the publisher wrote into the record before its push. */
   saved: RoutinePublishState[]
   logs: Array<{ level: 'info' | 'warn'; message: string }>
-  asked: { newLinksSite: number; sites: number }
+  asked: { newLinksSite: number; sites: number; listed: number }
   input: (state: RoutinePublishState | null) => PublishInput
 }
 
-/** A publisher whose runs answer in order, on a machine with these sites and this « New links go to ». */
+/** A publisher whose runs answer in order, on a machine with these saved sites, these listed
+ *  sites (the saved ones unless told: the implicit cloud is the one listed and not saved) and
+ *  this « New links go to ». */
 function publisher(
   answers: Answer[],
-  machine: { newLinksSite?: string | null; sites?: string[] | (() => Promise<string[]>) } = {}
+  machine: {
+    newLinksSite?: string | null
+    sites?: string[] | (() => Promise<string[]>)
+    listed?: string[]
+  } = {}
 ): Harness {
   const calls: Call[] = []
   const events: string[] = []
   const saved: RoutinePublishState[] = []
   const logs: Harness['logs'] = []
-  const asked = { newLinksSite: 0, sites: 0 }
+  const asked = { newLinksSite: 0, sites: 0, listed: 0 }
   const queue = [...answers]
   const sites = machine.sites ?? [DECKS]
   const built = new SlidelessPublisher({
@@ -95,6 +101,10 @@ function publisher(
     sites: async () => {
       asked.sites++
       return typeof sites === 'function' ? sites() : sites
+    },
+    listedSites: async () => {
+      asked.listed++
+      return machine.listed ?? (typeof sites === 'function' ? sites() : sites)
     },
     log: (level, message) => logs.push({ level, message })
   })
@@ -241,8 +251,9 @@ describe('SlidelessPublisher.publish', () => {
       },
       shareError: null
     })
-    // The saved sites read once, to check the setting; no deck looked for by its id, nothing written before the push.
-    expect(h.asked.sites).toBe(1)
+    // The listed sites read once, to check the setting; no deck looked for by its id, nothing written before the push.
+    expect(h.asked.listed).toBe(1)
+    expect(h.asked.sites).toBe(0)
     expect(h.calls.some((c) => c.args[3] === 'versions')).toBe(false)
     expect(h.saved).toEqual([])
   })
@@ -255,8 +266,40 @@ describe('SlidelessPublisher.publish', () => {
       "« New links go to » names https://cloud.example.test, which is no longer one of this machine's Slideless sites: choose one in Settings › Slideless."
     )
     expect(h.calls).toEqual([])
-    expect(h.asked).toEqual({ newLinksSite: 1, sites: 1 })
+    expect(h.asked).toEqual({ newLinksSite: 1, sites: 0, listed: 1 })
     expect(h.saved).toEqual([])
+  })
+
+  it('takes the implicit cloud, listed and not saved, as a site « New links go to » may name: first deck and a kept deck gone alike', async () => {
+    // A first deck: the cloud is listed (the machine has never saved it), so the deck goes there.
+    const first = publisher([pushed('deck-1', 1), shared('https://s.example/1')], {
+      newLinksSite: CLOUD,
+      sites: [DECKS],
+      listed: [DECKS, CLOUD]
+    })
+    const outcome = await first.publisher.publish(first.input(null))
+    expect(first.calls.map((c) => c.args)).toEqual([
+      pushArgs(CLOUD, '/data/decks/r/run-1', 'Workspace health', null),
+      shareArgs(CLOUD, 'deck-1', 'Clave routine · Workspace health · Studio')
+    ])
+    expect(outcome.state.site).toBe(CLOUD)
+    // A kept deck no saved site knows, on a machine that saved none: a new deck on the listed cloud.
+    const kept = publisher([pushed('deck-2', 1), shared('https://s.example/2')], {
+      newLinksSite: CLOUD,
+      sites: [],
+      listed: [CLOUD]
+    })
+    const again = await kept.publisher.publish(
+      kept.input({
+        deckId: 'deck-old',
+        share: { tokenId: 'tok-old', url: 'https://s.example/old' }
+      })
+    )
+    expect(kept.calls.map((c) => c.args)).toEqual([
+      pushArgs(CLOUD, '/data/decks/r/run-1', 'Workspace health', null),
+      shareArgs(CLOUD, 'deck-2', 'Clave routine · Workspace health · Studio')
+    ])
+    expect(again.state.site).toBe(CLOUD)
   })
 
   it('says no site is chosen when there is no record and no « New links go to », and runs nothing', async () => {
@@ -282,7 +325,7 @@ describe('SlidelessPublisher.publish', () => {
     ])
     expect(outcome).toMatchObject({ deckId: 'deck-1', version: 2, url: 'https://s.example/1' })
     expect(outcome.state).toEqual(state)
-    expect(h.asked).toEqual({ newLinksSite: 0, sites: 0 })
+    expect(h.asked).toEqual({ newLinksSite: 0, sites: 0, listed: 0 })
     expect(h.saved).toEqual([])
   })
 
