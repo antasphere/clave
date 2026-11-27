@@ -16,8 +16,15 @@ vi.hoisted(() => {
     length: 0
   }
   g.window = globalThis
+  // The agent tools' dispatcher listens on the window at import.
+  g.addEventListener = () => {}
+  g.removeEventListener = () => {}
+  g.document = { addEventListener: () => {}, removeEventListener: () => {}, hidden: true }
 })
-vi.mock('./exchange-capture', () => ({ emitTabClosed: vi.fn() }))
+vi.mock('./exchange-capture', async (original) => ({
+  ...(await original<typeof import('./exchange-capture')>()),
+  emitTabClosed: vi.fn()
+}))
 
 import { useSessionStore } from '../store/session-store'
 import { applyFleetSnapshot, useFleetStore } from '../store/fleet-store'
@@ -25,6 +32,9 @@ import { useCloseErrorsStore } from '../store/close-errors-store'
 import { setSessionDraft, useDraftStore } from '../views/draft-store'
 import { emitTabClosed } from './exchange-capture'
 import { closeFailureReason, closeTab } from './close-tab'
+import { registerLinkedFlusher } from '../store/linked-document-store'
+import { performGroupDissolve } from './group-dissolve'
+import { initMcpDispatcher } from './mcp-dispatcher'
 import { resourceKey } from '@clave/contract/fleet'
 
 const g = globalThis as unknown as Record<string, unknown>
@@ -197,5 +207,202 @@ describe('the sentence on the mark', () => {
   })
   it('is cut at a readable length', () => {
     expect(closeFailureReason(new Error('x'.repeat(1000)), 'S').length).toBeLessThan(300)
+  })
+})
+
+// The verifier's round 1 (PRDCT-5315): each test below went red on the
+// change as first written, or stayed green with the behaviour removed.
+
+describe('a close that fails keeps the session view served', () => {
+  it("the tab's serving process is neither stopped nor dropped when its server refuses the close", async () => {
+    const [r, serving] = [remote('owner'), remote('serving')]
+    useSessionStore.setState({
+      sessions: [
+        { ...(tab(r) as object), view: { url: 'http://localhost:5173', serverSessionId: serving } },
+        tab(serving)
+      ],
+      groups: [],
+      displayOrder: [r],
+      selectedSessionIds: [],
+      focusedSessionId: null
+    } as never)
+    api.killSession.mockImplementation(async (id: string) => {
+      if (id === r) throw new Error('refused')
+    })
+    expect((await closeTab(r)).closed).toBe(false)
+    expect(api.killSession.mock.calls.map((c) => c[0])).not.toContain(serving)
+    expect(ids()).toEqual(expect.arrayContaining([r, serving]))
+  })
+
+  it('a close that goes through stops the serving process after the tab itself', async () => {
+    const [r, serving] = [remote('owner2'), remote('serving2')]
+    useSessionStore.setState({
+      sessions: [
+        { ...(tab(r) as object), view: { url: 'http://localhost:5173', serverSessionId: serving } },
+        tab(serving)
+      ],
+      groups: [],
+      displayOrder: [r],
+      selectedSessionIds: [],
+      focusedSessionId: null
+    } as never)
+    await closeTab(r)
+    expect(api.killSession.mock.calls.map((c) => c[0])).toEqual([r, serving])
+    expect(ids()).toEqual([])
+  })
+})
+
+describe('a linked document is saved before the row goes', () => {
+  it('the panel saves while its tab is still in the store', async () => {
+    seed(['a', 'b'], [], ['a', 'b'])
+    let presentAtSave: boolean | null = null
+    const off = registerLinkedFlusher(
+      'a',
+      async () => {
+        presentAtSave = ids().includes('a')
+      },
+      () => false
+    )
+    await closeTab('a')
+    off()
+    expect(presentAtSave).toBe(true)
+    expect(ids()).toEqual(['b'])
+  })
+})
+
+describe('the hold on snapshots ends with the close', () => {
+  it('a server tab closed for good is listed again by a later snapshot that names it', async () => {
+    const r = remote('h')
+    seed([r], [], [r])
+    await closeTab(r)
+    applyFleetSnapshot({
+      serverId: SERVER,
+      sessions: [{ id: r, cwd: '/work', state: 'idle', provider: 'claude' }],
+      records: [],
+      layout: { revision: 1, groups: [], displayOrder: [r] }
+    } as never)
+    expect(ids()).toContain(r)
+  })
+})
+
+describe('a mark lives as long as its tab', () => {
+  it("is dropped when the tab's server stops listing it", async () => {
+    const r = remote('m')
+    seed([r], [], [r])
+    api.killSession.mockRejectedValueOnce(new Error('refused'))
+    await closeTab(r)
+    expect(useCloseErrorsStore.getState().errors[r]).toBeDefined()
+    applyFleetSnapshot({
+      serverId: SERVER,
+      sessions: [],
+      records: [],
+      layout: { revision: 2, groups: [], displayOrder: [] }
+    } as never)
+    expect(ids()).not.toContain(r)
+    expect(useCloseErrorsStore.getState().errors[r]).toBeUndefined()
+  })
+})
+
+describe('two closes of the same tab', () => {
+  it('the second joins the first: one stop, one outcome', async () => {
+    const r = remote('twice')
+    seed([r], [], [r])
+    const kill = pendingKill()
+    const first = closeTab(r)
+    const second = closeTab(r)
+    expect(second).toBe(first)
+    kill.reject(new Error('refused'))
+    await first
+    expect(api.killSession).toHaveBeenCalledTimes(1)
+    expect(ids()).toEqual([r])
+  })
+})
+
+describe("a group's Delete when a server refuses a tab of it", () => {
+  const grp = resourceKey('group', SERVER, 'g')
+  const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+  it('the rows and the group leave before any stop returns', async () => {
+    const [a, b] = [remote('a'), remote('b')]
+    seed([a, b, 'loose'], [{ id: grp, sessionIds: [a, b] }], ['loose', grp])
+    const releases: (() => void)[] = []
+    api.killSession.mockImplementation(() => new Promise<void>((r) => releases.push(() => r())))
+    const done = performGroupDissolve(grp, 'delete')
+    expect(ids()).toEqual(['loose'])
+    expect(useSessionStore.getState().groups).toEqual([])
+    releases.forEach((r) => r())
+    await done
+  })
+
+  it('the group comes back in its place the moment a refusal lands, holding that tab', async () => {
+    const [a, b] = [remote('a'), remote('b')]
+    seed([a, b, 'loose'], [{ id: grp, sessionIds: [a, b] }], ['loose', grp])
+    let releaseB!: () => void
+    api.killSession.mockImplementation((id: string) =>
+      id === a
+        ? Promise.reject(new Error('refused'))
+        : new Promise<void>((r) => {
+            releaseB = () => r()
+          })
+    )
+    const done = performGroupDissolve(grp, 'delete')
+    await flush()
+    const during = useSessionStore.getState()
+    expect(during.groups.find((x) => x.id === grp)?.sessionIds).toEqual([a])
+    expect(during.displayOrder).toEqual(['loose', grp])
+    releaseB()
+    await done
+    expect(useSessionStore.getState().groups.find((x) => x.id === grp)?.sessionIds).toEqual([a])
+  })
+
+  it('never names a tab that was closed again before the group came back', async () => {
+    const [a, b] = [remote('a'), remote('b')]
+    seed([a, b], [{ id: grp, sessionIds: [a, b] }], [grp])
+    let releaseB!: () => void
+    let refuseA!: (e: Error) => void
+    api.killSession.mockImplementation((id: string) =>
+      id === a
+        ? new Promise<void>((_, reject) => {
+            refuseA = reject
+          })
+        : new Promise<void>((r) => {
+            releaseB = () => r()
+          })
+    )
+    const done = performGroupDissolve(grp, 'delete')
+    refuseA(new Error('refused'))
+    await flush()
+    // a is back in its group; the person closes it again and the server takes it.
+    api.killSession.mockImplementation(async () => {})
+    await closeTab(a)
+    releaseB()
+    await done
+    const after = useSessionStore.getState()
+    expect(after.sessions.map((s) => s.id)).toEqual([])
+    expect(after.groups.flatMap((x) => x.sessionIds)).not.toContain(a)
+  })
+})
+
+describe("an agent's close tool", () => {
+  it('answers an error with the reason when the server refuses, and the tab comes back', async () => {
+    const r = remote('agent')
+    seed([r], [], [r])
+    api.killSession.mockRejectedValue(new Error('refused'))
+    const bridge = api as unknown as Record<string, unknown>
+    let receive: (m: unknown) => void = () => {}
+    const answer = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      bridge.onMcpCommand = (h: typeof receive) => {
+        receive = h
+        return () => {}
+      }
+      bridge.mcpRespond = resolve
+    })
+    const off = initMcpDispatcher()
+    receive({ requestId: 'c1', command: 'closeSession', payload: { sessionId: r } })
+    const got = await answer
+    off()
+    expect(got.ok).toBe(false)
+    expect(got.error).toContain('Studio could not close this tab: refused')
+    expect(ids()).toContain(r)
   })
 })

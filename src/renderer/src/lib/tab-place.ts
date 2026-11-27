@@ -122,36 +122,53 @@ export function groupPlaceOf(state: Layout, groupId: string): GroupPlace | null 
 }
 
 /**
- * The group back in its place holding only the tabs whose close failed
+ * The group back in its place around the tabs whose close failed
  * (PRDCT-5315): a group is not deleted while a tab of it still runs, as it
- * never was. Those tabs came back at the top level when the group was
- * already gone; they move back into it, in their old order, and the
- * terminals that did close leave their slots empty.
+ * never was. Run as each failure lands, so a failed tab goes back into its
+ * group at once rather than sitting at the top level until every stop has
+ * returned: the first failure brings the group back, the next ones join it,
+ * each in its old order. Only tabs the store still holds go in (one closed
+ * again meanwhile is gone for good), and the terminals that did close leave
+ * their slots empty.
  */
 export function restoreGroupPlace(state: Layout, place: GroupPlace, failed: Set<string>): Layout {
-  if (state.groups.some((g) => g.id === place.group.id)) return state
-  const group: SessionGroup = {
-    ...place.group,
-    sessionIds: place.group.sessionIds.filter((id) => failed.has(id)),
-    terminals: place.group.terminals.map((t) =>
-      t.sessionId !== null && failed.has(t.sessionId) ? t : { ...t, sessionId: null }
-    )
-  }
-  const held = new Set([...group.sessionIds, ...group.terminals.map((t) => t.sessionId)])
-  const groups = [
-    ...state.groups.map((g) => ({
-      ...g,
-      sessionIds: g.sessionIds.filter((id) => !held.has(id)),
-      terminals: g.terminals.map((t) =>
-        t.sessionId !== null && held.has(t.sessionId) ? { ...t, sessionId: null } : t
-      )
-    })),
-    group
+  const live = new Set(state.sessions.map((s) => s.id))
+  const existing = state.groups.find((g) => g.id === place.group.id)
+  const already = new Set([
+    ...(existing?.sessionIds ?? []),
+    ...(existing?.terminals.map((t) => t.sessionId) ?? [])
+  ])
+  const back = new Set([...failed].filter((id) => live.has(id) && !already.has(id)))
+  if (back.size === 0) return state
+  const members = new Set([...(existing?.sessionIds ?? []), ...back])
+  const sessionIds = [
+    ...place.group.sessionIds.filter((id) => members.has(id)),
+    ...(existing?.sessionIds ?? []).filter((id) => !place.group.sessionIds.includes(id))
   ]
-  const order = state.displayOrder.filter((id) => !held.has(id))
+  const terminals = place.group.terminals.map((t) => {
+    if (t.sessionId !== null && back.has(t.sessionId)) return t
+    const kept = existing?.terminals.find((e) => e.id === t.id)
+    return kept ?? { ...t, sessionId: null }
+  })
+  const group: SessionGroup = { ...(existing ?? place.group), sessionIds, terminals }
+  const others = state.groups
+    .filter((g) => g.id !== group.id)
+    .map((g) => ({
+      ...g,
+      sessionIds: g.sessionIds.filter((id) => !back.has(id)),
+      terminals: g.terminals.map((t) =>
+        t.sessionId !== null && back.has(t.sessionId) ? { ...t, sessionId: null } : t
+      )
+    }))
+  const groups = existing
+    ? state.groups.map((g) =>
+        g.id === group.id ? group : (others.find((o) => o.id === g.id) ?? g)
+      )
+    : [...others, group]
+  const order = state.displayOrder.filter((id) => !back.has(id))
   return {
     sessions: state.sessions,
     groups,
-    displayOrder: insertAt(order, group.id, place.after, place.index)
+    displayOrder: existing ? order : insertAt(order, group.id, place.after, place.index)
   }
 }

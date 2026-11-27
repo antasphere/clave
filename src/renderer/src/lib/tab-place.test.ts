@@ -141,6 +141,34 @@ describe('a deleted group comes back around the tabs whose close failed (PRDCT-5
     expect(back.displayOrder).toEqual(['g'])
   })
 
+  it('never brings back a tab the store no longer holds, nor a group around nothing', () => {
+    const before = {
+      sessions: [tab('a'), tab('b')],
+      groups: [group('g', ['a', 'b'])],
+      displayOrder: ['g']
+    }
+    const place = groupPlaceOf(before, 'g')!
+    const gone = { sessions: [tab('b')], groups: [], displayOrder: ['b'] }
+    expect(restoreGroupPlace(gone, place, new Set(['a']))).toBe(gone)
+  })
+
+  it('a later refusal joins the group an earlier one brought back, in the old order', () => {
+    const before = {
+      sessions: [tab('a'), tab('b'), tab('c')],
+      groups: [group('g', ['a', 'b', 'c'])],
+      displayOrder: ['g']
+    }
+    const place = groupPlaceOf(before, 'g')!
+    const firstBack = {
+      sessions: [tab('a'), tab('c')],
+      groups: [group('g', ['c'])],
+      displayOrder: ['a', 'g']
+    }
+    const back = restoreGroupPlace(firstBack, place, new Set(['a']))
+    expect(back.groups[0].sessionIds).toEqual(['a', 'c'])
+    expect(back.displayOrder).toEqual(['g'])
+  })
+
   it('leaves a group that is already back as it is', () => {
     const state = { sessions: [tab('a')], groups: [group('g', ['a'])], displayOrder: ['g'] }
     const place = groupPlaceOf(state, 'g')!

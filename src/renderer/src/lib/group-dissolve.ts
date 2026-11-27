@@ -55,7 +55,14 @@ export async function performGroupDissolve(groupId: string, mode: DissolveMode):
     { sessions: current.sessions, groups: current.groups, displayOrder: getDisplayOrder(current) },
     groupId
   )
-  const closing = toKill.map((sid) => closeTab(sid).then((outcome) => ({ sid, outcome })))
+  // A group whose server refused to close a tab of it stays, holding that
+  // tab: put back the moment each refusal lands.
+  const closing = toKill.map((sid) =>
+    closeTab(sid).then((outcome) => {
+      if (!outcome.closed && place)
+        useSessionStore.getState().restoreClosedGroup(place, new Set([sid]))
+    })
+  )
   const store = useSessionStore.getState()
   if (mode === 'delete') store.deleteGroup(groupId)
   else store.ungroupSessions(groupId)
@@ -71,11 +78,7 @@ export async function performGroupDissolve(groupId: string, mode: DissolveMode):
         : (selected[0] ?? null)
     })
   }
-  // A group whose server refused to close a tab of it stays, holding that tab.
-  const failed = new Set(
-    (await Promise.all(closing)).filter((c) => !c.outcome.closed).map((c) => c.sid)
-  )
-  if (failed.size > 0 && place) useSessionStore.getState().restoreClosedGroup(place, failed)
+  await Promise.all(closing)
 }
 
 interface DissolveState {

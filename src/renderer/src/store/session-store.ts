@@ -313,7 +313,10 @@ interface SessionState {
    *  owner in the same breath. The spawn paths inline this; the boot restore
    *  needs it as an action (see lib/adopt-record.ts). */
   addHiddenSession: (session: Session) => void
-  removeSession: (id: string) => void
+  /** `keepServing` leaves the tab's session-view serving process running and
+   *  in the store: a close that may still fail (PRDCT-5315) stops it only once
+   *  the tab's own stop has gone through. */
+  removeSession: (id: string, options?: { keepServing?: boolean }) => void
   /** Put back a tab whose close failed (PRDCT-5315) where it sat when the
    *  close began (`lib/tab-place.ts`). Takes no focus: the person has moved on. */
   restoreClosedTab: (place: TabPlace) => void
@@ -1785,7 +1788,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       return next
     }),
 
-  removeSession: (id) =>
+  removeSession: (id, options) =>
     set((state) => {
       if (linkedEditorBlocksClose(id)) return state
       // A closed tab's unsent prompt goes with it, from storage too: the draft
@@ -1796,7 +1799,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       // A closed session takes its hidden serving session (session.view) with
       // it: nothing else owns that process, and an orphan would idle invisibly.
       const owner = state.sessions.find((s) => s.id === id)
-      const servingId = owner?.view?.serverSessionId ?? null
+      const servingId = options?.keepServing ? null : (owner?.view?.serverSessionId ?? null)
       if (servingId) {
         window.electronAPI?.killSession?.(servingId).catch(() => {})
       }

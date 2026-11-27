@@ -55,10 +55,29 @@ function serverNameOf(id: string): string {
   return useFleetStore.getState().connections.find((c) => c.id === owner)?.name ?? 'Its server'
 }
 
-export async function closeTab(
-  id: string,
-  options: CloseTabOptions = {}
-): Promise<CloseTabOutcome> {
+/** The closes under way, one per tab: a second close of a tab whose first is
+ *  still running joins it rather than starting a stop of its own. */
+const closing = new Map<string, Promise<CloseTabOutcome>>()
+
+export function closeTab(id: string, options: CloseTabOptions = {}): Promise<CloseTabOutcome> {
+  const running = closing.get(id)
+  if (running) return running
+  // Started now, so the row leaves in the caller's own task when nothing has
+  // to be saved first (a group's Delete counts on it).
+  const close = closeTabNow(id, options).finally(() => closing.delete(id))
+  closing.set(id, close)
+  return close
+}
+
+/** The tab's session view's serving process, stopped once the tab's own
+ *  close went through: a close that fails keeps its page served. */
+function stopServing(servingId: string | null): void {
+  if (!servingId) return
+  window.electronAPI.killSession(servingId).catch(() => {})
+  useSessionStore.getState().removeSession(servingId)
+}
+
+async function closeTabNow(id: string, options: CloseTabOptions): Promise<CloseTabOutcome> {
   const remote = isRemoteKey(id)
   const state = useSessionStore.getState()
   const session = state.sessions.find((s) => s.id === id)
@@ -84,6 +103,7 @@ export async function closeTab(
     id
   )
   const draft = useDraftStore.getState().drafts[id]
+  const servingId = session.view?.serverSessionId ?? null
   // The linked document's last edits are saved while its panel is still
   // mounted: the stop asks the window for them, and the row is gone by then.
   // Without one, nothing is awaited before the row goes, so the row leaves in
@@ -94,12 +114,16 @@ export async function closeTab(
     )
   if (remote) holdClosingTab(id)
   clearCloseError(id)
-  useSessionStore.getState().removeSession(id)
+  useSessionStore.getState().removeSession(id, { keepServing: true })
   try {
     await window.electronAPI.killSession(id)
+    stopServing(servingId)
     return { closed: true }
   } catch (error) {
-    if (!remote || !place) return { closed: true }
+    if (!remote || !place) {
+      stopServing(servingId)
+      return { closed: true }
+    }
     const reason = closeFailureReason(error, serverNameOf(id))
     releaseClosingTab(id)
     useSessionStore.getState().restoreClosedTab(place)

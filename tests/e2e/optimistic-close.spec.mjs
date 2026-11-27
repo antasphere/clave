@@ -4,10 +4,12 @@
 // 27 November 2026). The chat here runs a stand-in CLI on a Clave server that
 // waits 900 ms after its stop signal, as the real CLI does.
 //
-// Fails if: the row is still in the sidebar 400 ms after « Delete » is
-// clicked, the stand-in is never stopped, or a tab whose server is gone when
-// it is closed does not come back with the mark before its title and a
-// tooltip naming the server and saying the tab is still open.
+// Fails if: closed from the sidebar's « Delete », the chat header's « Close
+// session » or the keyboard, the row is still in the sidebar 400 ms later,
+// comes back at any point in the 2.5 s after, or its stand-in is never
+// stopped; or a tab whose server is gone when it is closed does not come
+// back with the mark before its title and a tooltip naming the server and
+// saying the tab is still open.
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { REPO } from './harness.mjs'
@@ -43,26 +45,51 @@ const alive = (pid) => {
   }
 }
 
-/** Arm a watch for the row's removal; the promise resolves with the ms from
- *  the arm to the row leaving the DOM, or -1 after five seconds. */
-const armRowGone = (win, key) =>
-  win.evaluate((key) => {
-    const start = performance.now()
-    window.__rowGone = new Promise((resolve) => {
-      const gone = () => !document.querySelector(`[data-sidebar-item-id="${CSS.escape(key)}"]`)
-      const timer = setTimeout(() => {
-        obs.disconnect()
-        resolve(-1)
-      }, 5000)
+/** Arm a watch on the row: `window.__rowGone` resolves, `watchMs` after the
+ *  arm, with when it left the DOM (ms from the arm, or -1) and when it came
+ *  back after leaving (ms, or null). A row that flashes back for the length
+ *  of the stop fails the second figure. */
+const armRowGone = (win, key, watchMs = 2500) =>
+  win.evaluate(
+    ({ key, watchMs }) => {
+      const start = performance.now()
+      const at = () => Math.round(performance.now() - start)
+      const present = () => !!document.querySelector(`[data-sidebar-item-id="${CSS.escape(key)}"]`)
+      let gone = -1
+      let back = null
       const obs = new MutationObserver(() => {
-        if (!gone()) return
-        obs.disconnect()
-        clearTimeout(timer)
-        resolve(Math.round(performance.now() - start))
+        if (gone < 0 && !present()) gone = at()
+        else if (gone >= 0 && back === null && present()) back = at()
       })
       obs.observe(document.body, { subtree: true, childList: true })
-    })
-  }, key)
+      window.__rowGone = new Promise((resolve) =>
+        setTimeout(() => {
+          obs.disconnect()
+          resolve({ gone, back })
+        }, watchMs)
+      )
+    },
+    { key, watchMs }
+  )
+
+/** A chat on the server, its stand-in CLI started by a first message; the
+ *  CLI's pid, read from the message reaching it. */
+async function liveChat(win, key, inputs, text) {
+  await win.locator(`[data-sidebar-item-id="${key}"]`).click()
+  const composer = win
+    .locator(`[data-session-id="${key}"] [data-testid="chat-view"]`)
+    .getByRole('textbox', { name: 'Message', exact: true })
+  await eventually(() => composer.isEnabled(), 'the chat composer is enabled')
+  await composer.fill(text)
+  await composer.press('Enter')
+  const reached = () =>
+    inputs().find(
+      (i) =>
+        i.frame.type === 'user' && JSON.stringify(i.frame.message?.content ?? '').includes(text)
+    )
+  await eventually(() => !!reached(), `the message "${text}" reaches its stand-in CLI`)
+  return reached().pid
+}
 
 async function closeFromSidebar(win, key) {
   const row = win.locator(`[data-sidebar-item-id="${key}"] .sidebar-item`)
@@ -78,7 +105,6 @@ export async function run(t) {
   const world = await fleetWorld('optimistic-close', { count: 1 })
   try {
     const [server] = world.servers
-    const processes = () => lines(path.join(server.root, 'claude-stub-processes.jsonl'))
     await request(server, '/launch-profiles', {
       profile: {
         id: 'slow-exit-stub',
@@ -94,6 +120,8 @@ export async function run(t) {
         options: { claudeMode: true, launchProfileId: 'chat:claude:slow-exit-stub' }
       })
     const chat = await start()
+    const headerChat = await start()
+    const keyboardChat = await start()
     const spare = await start()
 
     const mac = await world.mac('close')
@@ -102,58 +130,84 @@ export async function run(t) {
     const { win } = mac
     const key = owned('session', owner, chat.id)
     const spareKey = owned('session', owner, spare.id)
+    const headerKey = owned('session', owner, headerChat.id)
+    const keyboardKey = owned('session', owner, keyboardChat.id)
     await showServer(mac, 0)
 
-    // Each chat's CLI runs on the server; the one this chat runs is the one
-    // its message reaches.
     const inputs = () => lines(path.join(server.root, 'claude-stub-input.jsonl'))
-    await win.locator(`[data-sidebar-item-id="${key}"]`).click()
-    const composer = win
-      .locator(`[data-session-id="${key}"] [data-testid="chat-view"]`)
-      .getByRole('textbox', { name: 'Message', exact: true })
-    await eventually(() => composer.isEnabled(), 'the chat composer is enabled')
-    await composer.fill('hello from the close spec')
-    await composer.press('Enter')
-    const reached = () =>
-      inputs().find(
-        (i) =>
-          i.frame.type === 'user' &&
-          JSON.stringify(i.frame.message?.content ?? '').includes('hello from the close spec')
-      )
-    await eventually(() => !!reached(), "the chat's message reaches its stand-in CLI")
-    const { pid } = reached()
-    t.check('the chat runs on a stand-in CLI that is alive', alive(pid) && processes().length >= 1)
 
-    await closeFromSidebar(win, key)
-    const goneMs = await win.evaluate(() => window.__rowGone)
-    t.check(
-      `the chat's row leaves within ${ROW_GONE_WITHIN_MS} ms of « Delete », its CLI taking ${EXIT_DELAY_MS} ms to stop`,
-      goneMs >= 0 && goneMs < ROW_GONE_WITHIN_MS,
-      `row gone after ${goneMs} ms`
-    )
-    await eventually(() => !alive(pid), 'the stand-in CLI is stopped behind the row')
-    t.check('the stand-in CLI was stopped', !alive(pid))
+    // Three ways to close a chat whose CLI takes 900 ms to stop: the sidebar's
+    // « Delete », the chat header's « Close session », the keyboard.
+    const roads = [
+      {
+        name: 'the sidebar',
+        key,
+        close: () => closeFromSidebar(win, key)
+      },
+      {
+        name: "the chat header's « Close session »",
+        key: headerKey,
+        close: async () => {
+          await win
+            .locator(`[data-session-id="${headerKey}"]`)
+            .getByRole('button', { name: 'Close session' })
+            .first()
+            .click()
+          const confirm = win.getByRole('button', { name: 'Delete', exact: true })
+          await confirm.waitFor()
+          await armRowGone(win, headerKey)
+          await confirm.click()
+        }
+      },
+      {
+        name: 'the keyboard',
+        key: keyboardKey,
+        close: async () => {
+          await win.evaluate(() => document.activeElement?.blur?.())
+          await armRowGone(win, keyboardKey)
+          await win.keyboard.press('Meta+Backspace')
+        }
+      }
+    ]
+    for (const road of roads) {
+      const pid = await liveChat(win, road.key, inputs, `hello from ${road.name}`)
+      t.check(`${road.name}: the chat runs on a stand-in CLI that is alive`, alive(pid))
+      await road.close()
+      const { gone, back } = await win.evaluate(() => window.__rowGone)
+      t.check(
+        `${road.name}: the row leaves within ${ROW_GONE_WITHIN_MS} ms, its CLI taking ${EXIT_DELAY_MS} ms to stop`,
+        gone >= 0 && gone < ROW_GONE_WITHIN_MS,
+        `row gone after ${gone} ms`
+      )
+      t.check(`${road.name}: the row never comes back`, back === null, `back after ${back} ms`)
+      await eventually(() => !alive(pid), `${road.name}: the stand-in CLI is stopped`)
+      t.check(`${road.name}: the stand-in CLI was stopped behind the row`, !alive(pid))
+    }
     await eventually(
       async () =>
         !(await win.evaluate((id) => window.electronAPI.fleetSnapshot(id), owner)).sessions.some(
-          (s) => s.id.endsWith(chat.id)
+          (s) => [chat.id, headerChat.id, keyboardChat.id].some((id) => s.id.endsWith(id))
         ),
-      'the server no longer lists the chat'
+      'the server no longer lists the three chats'
     )
     t.check(
-      'the row does not come back once the stop returned',
-      (await win.locator(`[data-sidebar-item-id="${key}"]`).count()) === 0
+      'no row comes back once the stops returned',
+      (await win
+        .locator(
+          `[data-sidebar-item-id="${key}"], [data-sidebar-item-id="${headerKey}"], [data-sidebar-item-id="${keyboardKey}"]`
+        )
+        .count()) === 0
     )
 
     // The server goes away; closing its tab cannot be done, so the tab comes
     // back where it was, with the mark and the reason.
     await server.stop()
     await closeFromSidebar(win, spareKey)
-    const spareGoneMs = await win.evaluate(() => window.__rowGone)
+    const spareGone = await win.evaluate(() => window.__rowGone)
     t.check(
       'the row of a tab whose server is gone still leaves at once',
-      spareGoneMs >= 0 && spareGoneMs < ROW_GONE_WITHIN_MS,
-      `row gone after ${spareGoneMs} ms`
+      spareGone.gone >= 0 && spareGone.gone < ROW_GONE_WITHIN_MS,
+      `row gone after ${spareGone.gone} ms`
     )
     const mark = win.locator(`[data-sidebar-item-id="${spareKey}"] [data-testid="tab-close-error"]`)
     await eventually(async () => (await mark.count()) === 1, 'the tab comes back with the mark')
