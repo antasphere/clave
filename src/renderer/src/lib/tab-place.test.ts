@@ -240,3 +240,86 @@ describe('a group already back keeps what the person made of it (PRDCT-5315, rou
     expect(restoreGroupPlace(renamed, place, new Set(['c'])).groups[0].name).toBe('Mine now')
   })
 })
+
+describe('a later refusal never undoes what the person did meanwhile (PRDCT-5315, round 3)', () => {
+  const slot = (id: string, sessionId: string | null): never =>
+    ({ id, command: 'npm run dev', commandMode: 'auto', color: 'green', sessionId }) as never
+  const before = {
+    sessions: [tab('a'), tab('b'), tab('c'), tab('dev')],
+    groups: [group('g', ['a', 'b', 'c'], [slot('t', 'dev')])],
+    displayOrder: ['g']
+  }
+  const place = groupPlaceOf(before, 'g')!
+
+  it('keeps the order the person gave the tabs already back', () => {
+    // c's own restore put it first; the person had reordered a and b.
+    const reordered = {
+      sessions: [tab('a'), tab('b'), tab('c')],
+      groups: [group('g', ['c', 'b', 'a'])],
+      displayOrder: ['g']
+    }
+    expect(restoreGroupPlace(reordered, place, new Set(['c'])).groups[0].sessionIds).toEqual([
+      'b',
+      'c',
+      'a'
+    ])
+  })
+
+  it("leaves the person's order alone when only a terminal's refusal lands", () => {
+    const reordered = {
+      sessions: [tab('a'), tab('b'), tab('dev')],
+      groups: [group('g', ['b', 'a'], [slot('t', null)])],
+      displayOrder: ['g', 'dev']
+    }
+    const back = restoreGroupPlace(reordered, place, new Set(['dev']))
+    expect(back.groups[0].sessionIds).toEqual(['b', 'a'])
+    expect(back.groups[0].terminals[0].sessionId).toBe('dev')
+    expect(back.displayOrder).toEqual(['g'])
+  })
+
+  it('keeps a row the person placed between the members where they placed it', () => {
+    const placed = {
+      sessions: [tab('a'), tab('x'), tab('b'), tab('c')],
+      groups: [group('g', ['c', 'a', 'x', 'b'])],
+      displayOrder: ['g']
+    }
+    expect(restoreGroupPlace(placed, place, new Set(['c'])).groups[0].sessionIds).toEqual([
+      'a',
+      'x',
+      'b',
+      'c'
+    ])
+  })
+
+  it('leaves a refused terminal at the top level when the person removed its slot', () => {
+    const removed = {
+      sessions: [tab('a'), tab('dev')],
+      groups: [group('g', ['a'], [])],
+      displayOrder: ['dev', 'g']
+    }
+    const back = restoreGroupPlace(removed, place, new Set(['dev']))
+    expect(back.displayOrder).toContain('dev')
+  })
+
+  it('leaves an unslotted terminal at the top level when a tab of the group arrives with it', () => {
+    const removed = {
+      sessions: [tab('a'), tab('c'), tab('dev')],
+      groups: [group('g', ['c', 'a'], [])],
+      displayOrder: ['dev', 'g']
+    }
+    const back = restoreGroupPlace(removed, place, new Set(['c', 'dev']))
+    expect(back.groups[0].sessionIds).toEqual(['a', 'c'])
+    expect(back.displayOrder).toEqual(['dev', 'g'])
+  })
+
+  it('leaves a refused terminal at the top level when the person launched its slot again', () => {
+    const relaunched = {
+      sessions: [tab('a'), tab('dev'), tab('fresh')],
+      groups: [group('g', ['a'], [slot('t', 'fresh')])],
+      displayOrder: ['dev', 'g']
+    }
+    const back = restoreGroupPlace(relaunched, place, new Set(['dev']))
+    expect(back.groups[0].terminals[0].sessionId).toBe('fresh')
+    expect(back.displayOrder).toContain('dev')
+  })
+})

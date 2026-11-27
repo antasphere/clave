@@ -136,64 +136,74 @@ export function restoreGroupPlace(state: Layout, place: GroupPlace, failed: Set<
   const arriving = [...failed].filter((id) => live.has(id))
   if (arriving.length === 0) return state
   const existing = state.groups.find((g) => g.id === place.group.id)
-  const already = new Set([
-    ...(existing?.sessionIds ?? []),
-    ...(existing?.terminals.map((t) => t.sessionId) ?? [])
-  ])
-  // A failed tab may already sit in the group an earlier refusal brought back
-  // (its own restore read its place once the tabs above it had left, so it
-  // went first): the group's members are put back in their old order whatever
-  // order the refusals landed in. Rows the person added keep theirs, after.
-  const back = new Set(arriving.filter((id) => !already.has(id)))
-  const members = new Set([...(existing?.sessionIds ?? []), ...back])
-  const sessionIds = [
-    ...place.group.sessionIds.filter((id) => members.has(id)),
-    ...(existing?.sessionIds ?? []).filter((id) => !place.group.sessionIds.includes(id))
-  ]
-  // A terminal goes back into its own slot; the slots of a group already back
-  // stay as they are (one an earlier refusal filled, one the person added).
+  const original = place.group.sessionIds
+  const arrivingMembers = new Set(arriving.filter((id) => original.includes(id)))
+
+  // The members: a group already back keeps the order it has (the person may
+  // have reordered it, added a row, dragged one out); each arriving member is
+  // taken from wherever its own restore put it (first, since it read its place
+  // once the rows above it had left) and set after the nearest member that
+  // preceded it in the group as it was. A group coming back has its arriving
+  // members in their old order.
+  let sessionIds = existing ? existing.sessionIds.filter((id) => !arrivingMembers.has(id)) : []
+  for (const id of original.filter((x) => arrivingMembers.has(x))) {
+    const at = original.indexOf(id)
+    const before = original
+      .slice(0, at)
+      .reverse()
+      .find((x) => sessionIds.includes(x))
+    const after = original.slice(at + 1).find((x) => sessionIds.includes(x))
+    const index = before
+      ? sessionIds.indexOf(before) + 1
+      : after
+        ? sessionIds.indexOf(after)
+        : sessionIds.length
+    sessionIds = [...sessionIds.slice(0, index), id, ...sessionIds.slice(index)]
+  }
+
+  // A terminal goes back into its own slot while that slot is there and empty;
+  // a slot the person removed or launched again keeps what they made of it,
+  // and the refused terminal stays a row of its own at the top level, where
+  // its own restore put it, so it can still be seen and closed.
+  const slotted = new Set<string>()
   const terminals = existing
     ? existing.terminals.map((t) => {
         const was = place.group.terminals.find((p) => p.id === t.id)
-        return t.sessionId === null && was?.sessionId != null && back.has(was.sessionId)
-          ? { ...t, sessionId: was.sessionId }
-          : t
+        if (t.sessionId === null && was?.sessionId != null && arriving.includes(was.sessionId)) {
+          slotted.add(was.sessionId)
+          return { ...t, sessionId: was.sessionId }
+        }
+        return t
       })
-    : place.group.terminals.map((t) =>
-        t.sessionId !== null && back.has(t.sessionId) ? t : { ...t, sessionId: null }
-      )
+    : place.group.terminals.map((t) => {
+        if (t.sessionId !== null && arriving.includes(t.sessionId)) {
+          slotted.add(t.sessionId)
+          return t
+        }
+        return { ...t, sessionId: null }
+      })
+
+  const moved = new Set([...arrivingMembers, ...slotted])
   const unchanged =
     existing !== undefined &&
-    back.size === 0 &&
+    slotted.size === 0 &&
     sessionIds.length === existing.sessionIds.length &&
     sessionIds.every((id, i) => id === existing.sessionIds[i])
   if (unchanged) return state
   // A group already back keeps what the person made of it: its name, its
   // place in the sidebar, its colour.
   const group: SessionGroup = { ...(existing ?? place.group), sessionIds, terminals }
+  const release = (g: SessionGroup): SessionGroup => ({
+    ...g,
+    sessionIds: g.sessionIds.filter((id) => !moved.has(id)),
+    terminals: g.terminals.map((t) =>
+      t.sessionId !== null && moved.has(t.sessionId) ? { ...t, sessionId: null } : t
+    )
+  })
   const groups = existing
-    ? state.groups.map((g) =>
-        g.id === group.id
-          ? group
-          : {
-              ...g,
-              sessionIds: g.sessionIds.filter((id) => !back.has(id)),
-              terminals: g.terminals.map((t) =>
-                t.sessionId !== null && back.has(t.sessionId) ? { ...t, sessionId: null } : t
-              )
-            }
-      )
-    : [
-        ...state.groups.map((g) => ({
-          ...g,
-          sessionIds: g.sessionIds.filter((id) => !back.has(id)),
-          terminals: g.terminals.map((t) =>
-            t.sessionId !== null && back.has(t.sessionId) ? { ...t, sessionId: null } : t
-          )
-        })),
-        group
-      ]
-  const order = state.displayOrder.filter((id) => !back.has(id))
+    ? state.groups.map((g) => (g.id === group.id ? group : release(g)))
+    : [...state.groups.map(release), group]
+  const order = state.displayOrder.filter((id) => !moved.has(id))
   return {
     sessions: state.sessions,
     groups,
