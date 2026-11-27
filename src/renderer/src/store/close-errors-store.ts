@@ -17,6 +17,7 @@ interface CloseErrorsState {
 export const useCloseErrorsStore = create<CloseErrorsState>(() => ({ errors: {} }))
 
 export function setCloseError(sessionId: string, message: string): void {
+  watchTabs()
   useCloseErrorsStore.setState((state) => ({ errors: { ...state.errors, [sessionId]: message } }))
 }
 
@@ -36,16 +37,23 @@ export function useCloseError(sessionId: string): string | null {
 
 // A mark lives exactly as long as its tab: a tab that leaves the store by any
 // road takes its mark with it, so the same id listed again later (a server
-// back after a restart) is drawn without a reason that no longer holds.
-useSessionStore.subscribe((state, previous) => {
-  if (state.sessions === previous.sessions) return
-  const errors = useCloseErrorsStore.getState().errors
-  const marked = Object.keys(errors)
-  if (marked.length === 0) return
-  const present = new Set(state.sessions.map((s) => s.id))
-  const gone = marked.filter((id) => !present.has(id))
-  if (gone.length === 0) return
-  const next = { ...errors }
-  for (const id of gone) delete next[id]
-  useCloseErrorsStore.setState({ errors: next })
-})
+// back after a restart) is drawn without a reason that no longer holds. The
+// watch starts with the first mark, never at import: a module that merely
+// imports this one (a test with the session store stubbed) subscribes nothing.
+let watching = false
+function watchTabs(): void {
+  if (watching) return
+  watching = true
+  useSessionStore.subscribe((state, previous) => {
+    if (state.sessions === previous.sessions) return
+    const errors = useCloseErrorsStore.getState().errors
+    const marked = Object.keys(errors)
+    if (marked.length === 0) return
+    const present = new Set(state.sessions.map((s) => s.id))
+    const gone = marked.filter((id) => !present.has(id))
+    if (gone.length === 0) return
+    const next = { ...errors }
+    for (const id of gone) delete next[id]
+    useCloseErrorsStore.setState({ errors: next })
+  })
+}
