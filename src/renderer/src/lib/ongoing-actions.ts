@@ -2,6 +2,7 @@ import { useSessionStore } from '../store/session-store'
 import { useOngoingStore, newOngoingId, announceEnded } from '../store/ongoing-store'
 import { accountSessionFields, accountSpawnFields } from '../store/claude-profile-store'
 import { emitTabClosed } from './exchange-capture'
+import { closeTab } from './close-tab'
 import { isRemoteKey, ownerOf } from './fleet-identity'
 import {
   conversationConfigDir,
@@ -373,15 +374,7 @@ export async function endOngoing(entryId: string): Promise<void> {
       }
       await useOngoingStore.getState().update((entries) => entries.filter((e) => e.id !== entryId))
       if (!session) return
-      const state = useSessionStore.getState()
-      emitTabClosed(session, state.groups, 'user', null)
-      try {
-        await window.electronAPI.killSession(session.id)
-      } catch {
-        if (isRemoteKey(session.id)) return
-        // already gone
-      }
-      useSessionStore.getState().removeSession(session.id)
+      await closeTab(session.id)
     },
     true
   )

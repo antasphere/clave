@@ -1,6 +1,6 @@
 import { startDesktopFleet } from '../../store/fleet-store'
 import { initializeSkins } from '../../lib/skin'
-import { emitTabClosed } from '../../lib/exchange-capture'
+import { closeTab } from '../../lib/close-tab'
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -172,7 +172,6 @@ export function AppShell(): React.JSX.Element {
   )
 
   const addSession = useSessionStore((s) => s.addSession)
-  const removeSession = useSessionStore((s) => s.removeSession)
   const removeFileTab = useSessionStore((s) => s.removeFileTab)
   const resetSessions = useSessionStore((s) => s.resetSessions)
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
@@ -697,13 +696,7 @@ export function AppShell(): React.JSX.Element {
         const sid = target.sessionId ?? useSessionStore.getState().focusedSessionId
         if (!sid) return
         if (isFileTabId(sid)) removeFileTab(sid)
-        else {
-          const current = useSessionStore.getState()
-          const closing = current.sessions.find((session) => session.id === sid)
-          if (closing) emitTabClosed(closing, current.groups, 'user', null)
-          void window.electronAPI.killSession(sid).catch(() => {})
-          removeSession(sid)
-        }
+        else void closeTab(sid)
       },
       archiveAndKillSession: (_event, target) => {
         const sid = target.sessionId ?? useSessionStore.getState().focusedSessionId
@@ -758,7 +751,7 @@ export function AppShell(): React.JSX.Element {
       }
     } satisfies KeymapActionHandlers
     return actions
-  }, [removeFileTab, removeSession, toggleFilePalette, toggleFileTree, toggleSidebar])
+  }, [removeFileTab, toggleFilePalette, toggleFileTree, toggleSidebar])
   // Folio's update key has something to do only while an update waits or a
   // reading plays (PRDCT-4832); otherwise the chord reaches what is under it.
   // ⌘[ and ⌘] outdent and indent in the code editor (CodeMirror's own keymap):

@@ -600,6 +600,18 @@ canvas[data-orb-state] {
   height: 14px;
 }
 
+/* A tab back in the sidebar because its server could not close it
+   (PRDCT-5315): the mark before its title, the reason in its tooltip. */
+.tab-close-error {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-destructive);
+}
+.tab-close-error > svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ── Session launcher ── */
 
 /* The pinned launch row at the top of the sidebar: a plain-terminal button, an

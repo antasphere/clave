@@ -1,6 +1,5 @@
 import { isRemoteKey } from '../../lib/fleet-identity'
-import { reportFleetError } from '../../store/fleet-store'
-import { emitTabClosed } from '../../lib/exchange-capture'
+import { closeTab } from '../../lib/close-tab'
 import { useCallback, useState, type ReactElement } from 'react'
 import {
   ArrowTopRightOnSquareIcon,
@@ -37,28 +36,15 @@ export function TerminalHeader({ sessionId }: TerminalHeaderProps): ReactElement
   const multiCodex = useCodexAccountStore((s) => s.accounts.length > 1)
   const connection = useSessionConnection(session)
   const connectionLeft = sessionConnectionLeft(session)
-  const removeSession = useSessionStore((s) => s.removeSession)
   const setSessionServerStatus = useSessionStore((s) => s.setSessionServerStatus)
   const messageTrailEnabled = useSessionStore((s) => s.messageTrailEnabled)
   const setMessageTrailEnabled = useSessionStore((s) => s.setMessageTrailEnabled)
   const [showConfirm, setShowConfirm] = useState(false)
 
   const handleKill = useCallback(async () => {
-    const current = useSessionStore.getState()
-    const closing = current.sessions.find((s) => s.id === sessionId)
-    if (closing) emitTabClosed(closing, current.groups, 'user', null)
-    try {
-      await window.electronAPI.killSession(sessionId)
-    } catch {
-      if (isRemoteKey(sessionId)) {
-        reportFleetError(new Error('close failed'))
-        return
-      }
-      // session may already be dead
-    }
-    removeSession(sessionId)
     setShowConfirm(false)
-  }, [sessionId, removeSession])
+    await closeTab(sessionId)
+  }, [sessionId])
 
   const handleServerToggle = useCallback(() => {
     if (!session) return

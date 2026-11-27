@@ -1,8 +1,7 @@
 import { create } from 'zustand'
-import { useSessionStore } from '../store/session-store'
-import { emitTabClosed } from './exchange-capture'
-import { isRemoteKey } from './fleet-identity'
-import { reportFleetError } from '../store/fleet-store'
+import { getDisplayOrder, useSessionStore } from '../store/session-store'
+import { closeTab } from './close-tab'
+import { groupPlaceOf } from './tab-place'
 import { useOngoingStore } from '../store/ongoing-store'
 import { ongoingSessionIds } from './ongoing'
 
@@ -36,7 +35,10 @@ export {
   type DissolveMode
 } from './group-dissolve-rules'
 
-/** Kill what dissolving the group kills, then dissolve it in the store. */
+/** Close what dissolving the group closes, and dissolve it in the store at
+ *  once: the rows leave with the group, the stops run behind (PRDCT-5315). A
+ *  server tab whose stop fails comes back with the mark that says why, and
+ *  the group comes back around it, in its place. */
 export async function performGroupDissolve(groupId: string, mode: DissolveMode): Promise<void> {
   const current = useSessionStore.getState()
   const group = current.groups.find((g) => g.id === groupId)
@@ -49,23 +51,18 @@ export async function performGroupDissolve(groupId: string, mode: DissolveMode):
   const toKill = sessionsToKillOnDissolve(group, mode).filter((sid) => !ongoing.has(sid))
   if (mode === 'delete' && kept.length > 0)
     useSessionStore.getState().moveItems(kept, null, 'after')
-  const closed = await Promise.all(
-    toKill.map(async (sid) => {
-      const session = current.sessions.find((s) => s.id === sid)
-      if (session) emitTabClosed(session, current.groups, 'user', null)
-      try {
-        await window.electronAPI.killSession(sid)
-      } catch {
-        if (isRemoteKey(sid)) {
-          reportFleetError(new Error('close failed'))
-          return false
-        }
-        // session may already be dead
-      }
-      return true
+  const place = groupPlaceOf(
+    { sessions: current.sessions, groups: current.groups, displayOrder: getDisplayOrder(current) },
+    groupId
+  )
+  // A group whose server refused to close a tab of it stays, holding that
+  // tab: put back the moment each refusal lands.
+  const closing = toKill.map((sid) =>
+    closeTab(sid).then((outcome) => {
+      if (!outcome.closed && place)
+        useSessionStore.getState().restoreClosedGroup(place, new Set([sid]))
     })
   )
-  if (closed.includes(false)) return
   const store = useSessionStore.getState()
   if (mode === 'delete') store.deleteGroup(groupId)
   else store.ungroupSessions(groupId)
@@ -81,6 +78,7 @@ export async function performGroupDissolve(groupId: string, mode: DissolveMode):
         : (selected[0] ?? null)
     })
   }
+  await Promise.all(closing)
 }
 
 interface DissolveState {

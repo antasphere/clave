@@ -84,6 +84,9 @@ if (argv.includes('-p') && !argv.includes('--input-format')) {
       emit(copy)
     }
   })
-  process.on('SIGTERM', () => process.exit(0))
+  // `--stub-exit-delay <ms>` stops as the real CLI does, about a second after
+  // its stop signal (PRDCT-5315: what a tab's close used to wait for).
+  const exitDelay = Number(after('--stub-exit-delay') ?? 0)
+  process.on('SIGTERM', () => setTimeout(() => process.exit(0), exitDelay))
   setInterval(() => {}, 1000)
 }

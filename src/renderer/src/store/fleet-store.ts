@@ -151,6 +151,21 @@ function pipeline(serverId: string): SavePipeline<LayoutSnapshot> {
  */
 const cachedStates = new Map<string, Session['agentState']>()
 
+/**
+ * The tabs of a server whose close is under way (PRDCT-5315): their rows left
+ * the sidebar the moment the person confirmed, and the server still lists
+ * them until its stop returns. A snapshot landing in between leaves them out,
+ * or the row would come back for the length of the stop. Released when the
+ * stop returns, either way: a failed stop puts the tab back itself.
+ */
+const closingTabs = new Set<string>()
+export function holdClosingTab(id: string): void {
+  closingTabs.add(id)
+}
+export function releaseClosingTab(id: string): void {
+  closingTabs.delete(id)
+}
+
 export function applyFleetSnapshot(
   snapshot: FleetSnapshot,
   options?: { readonly cached?: boolean }
@@ -179,7 +194,7 @@ export function applyFleetSnapshot(
   const serverId = snapshot.serverId
   const stateById = new Map(snapshot.sessions.map((s) => [s.id, s]))
   const records = new Map(snapshot.records.map((r) => [r.id, r]))
-  const ids = new Set([...stateById.keys(), ...records.keys()])
+  const ids = new Set([...stateById.keys(), ...records.keys()].filter((id) => !closingTabs.has(id)))
   useSessionStore.setState((state) => {
     const previous = new Map<string, Session>(state.sessions.map((s) => [s.id, s] as const))
     const sessions: Session[] = [...ids].map((id) => {

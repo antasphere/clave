@@ -74,7 +74,7 @@ import { McpPanel } from './McpPanel'
 import { PluginPanel } from './PluginPanel'
 import { hostPanelFor, hostPanelOf, type HostPanel } from './control-panels'
 import { resumeHistoryEntry } from '../../../src/renderer/src/lib/session-history'
-import { emitTabClosed } from '../../../src/renderer/src/lib/exchange-capture'
+import { closeTab } from '../../../src/renderer/src/lib/close-tab'
 import { useViewSessionStore } from '../../../src/renderer/src/views/session-store'
 import { acceptRung } from '../../../src/renderer/src/lib/account-policy'
 import { useLimitSentence } from './limit-words'
@@ -934,11 +934,7 @@ export function ChatView({
     setPanel(null)
     if (!opened) return report('Could not resume that conversation')
     if (opened === session.id || conversation.entries.length > 0) return
-    const current = useViewSessionStore.getState()
-    const closing = current.sessions.find((s) => s.id === session.id)
-    if (closing) emitTabClosed(closing, current.groups, 'user', null)
-    await window.electronAPI.killSession(session.id).catch(() => {})
-    useViewSessionStore.getState().removeSession(session.id)
+    await closeTab(session.id)
   }
   const closeSlash = useCallback((): void => setSlashDismissed(draft), [draft])
   // Empty assistant turns (a closing frame that opened nothing) do not render;
