@@ -63,6 +63,12 @@ import {
 import { withDirToggled } from '../lib/panel-expansion'
 import { createSavePipeline } from '../lib/sidebar-save-pipeline'
 import { withoutGroup, withoutSession } from '../lib/sidebar-reflect'
+import {
+  restoreGroupPlace,
+  restoreTabPlace,
+  type GroupPlace,
+  type TabPlace
+} from '../lib/tab-place'
 
 // Re-export types and constants so existing imports continue to work
 export type {
@@ -308,6 +314,11 @@ interface SessionState {
    *  needs it as an action (see lib/adopt-record.ts). */
   addHiddenSession: (session: Session) => void
   removeSession: (id: string) => void
+  /** Put back a tab whose close failed (PRDCT-5315) where it sat when the
+   *  close began (`lib/tab-place.ts`). Takes no focus: the person has moved on. */
+  restoreClosedTab: (place: TabPlace) => void
+  /** Put back a deleted group holding the tabs whose close failed. */
+  restoreClosedGroup: (place: GroupPlace, failed: Set<string>) => void
   /** Remove a tab because its session RE-HOMED to another window — drop it
    *  from this store WITHOUT killing the pty (it is alive, just moved). */
   removeSessionForRehome: (id: string) => void
@@ -1755,6 +1766,24 @@ export const useSessionStore = create<SessionState>((set) => ({
     reflectOnBase((base) => withoutGroup(base, groupId, stayed))
     set(reflect)
   },
+
+  restoreClosedGroup: (place, failed) =>
+    set((state) =>
+      restoreGroupPlace(
+        { sessions: state.sessions, groups: state.groups, displayOrder: getDisplayOrder(state) },
+        place,
+        failed
+      )
+    ),
+
+  restoreClosedTab: (place) =>
+    set((state) => {
+      const next = restoreTabPlace(
+        { sessions: state.sessions, groups: state.groups, displayOrder: getDisplayOrder(state) },
+        place
+      )
+      return next
+    }),
 
   removeSession: (id) =>
     set((state) => {

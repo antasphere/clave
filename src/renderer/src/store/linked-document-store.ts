@@ -41,6 +41,11 @@ export function registerLinkedFlusher(
     }
   }
 }
+/** Whether a linked document's panel is mounted for the tab, with edits it
+ *  may still have to save (PRDCT-5315: the close waits for them only then). */
+export function hasLinkedFlusher(sessionId: string): boolean {
+  return flushers.has(sessionId)
+}
 export async function flushLinkedDocument(sessionId: string, allowConflict = false): Promise<void> {
   await flushers.get(sessionId)?.(allowConflict)
 }

@@ -1,7 +1,6 @@
 import { FleetRequestHost } from '../fleet/FleetControls'
-import { reportFleetError } from '../../store/fleet-store'
+import { closeTab } from '../../lib/close-tab'
 import { ownerOf, isRemoteKey } from '../../lib/fleet-identity'
-import { emitTabClosed } from '../../lib/exchange-capture'
 import { requestGroupDissolve } from '../../lib/group-dissolve'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -237,7 +236,6 @@ export function Sidebar(): React.JSX.Element {
   const selectSession = useSessionStore((s) => s.selectSession)
   const selectSessions = useSessionStore((s) => s.selectSessions)
   const addSession = useSessionStore((s) => s.addSession)
-  const removeSession = useSessionStore((s) => s.removeSession)
   const groups = useSessionStore((s) => s.groups)
   const displayOrder = useSessionStore((s) => s.displayOrder)
   const toggleGroupCollapsed = useSessionStore((s) => s.toggleGroupCollapsed)
@@ -1027,24 +1025,11 @@ export function Sidebar(): React.JSX.Element {
   }
   dragIdsRef.current = dragIdsFor
 
-  const handleDeleteSession = useCallback(
-    async (sessionId: string) => {
-      const current = useSessionStore.getState()
-      const session = current.sessions.find((s) => s.id === sessionId)
-      if (session) emitTabClosed(session, current.groups, 'user', null)
-      try {
-        await window.electronAPI.killSession(sessionId)
-      } catch {
-        if (isRemoteKey(sessionId)) {
-          reportFleetError(new Error('close failed'))
-          return
-        }
-        // session may already be dead
-      }
-      removeSession(sessionId)
-    },
-    [removeSession]
-  )
+  // The row leaves at once; a server tab whose stop fails comes back with a
+  // mark that says why (PRDCT-5315, lib/close-tab.ts).
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    await closeTab(sessionId)
+  }, [])
 
   /** The group's own `+`: launch a session INTO this group, with the workspace's
    *  remembered agent setup, the GROUP's default prompt, and the directory the

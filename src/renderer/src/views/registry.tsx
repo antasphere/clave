@@ -1,5 +1,4 @@
-import { isRemoteKey } from '../lib/fleet-identity'
-import { reportFleetError } from '../store/fleet-store'
+import { closeTab } from '../lib/close-tab'
 import { FleetResume } from '../components/fleet/FleetControls'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegistry } from './store'
@@ -12,12 +11,10 @@ import { TerminalPanel } from '../components/terminal/TerminalPanel'
 import { useViewSessionStore } from './session-store'
 import { bindKernelState } from './kernel-state'
 import { useSessionLog } from './conversation-store'
-import { clearSessionDraft } from './draft-store'
 import { PluginViewSurface } from './PluginViewSurface'
 import { availableViews, resolveView } from './resolution'
 import { SessionMenu } from './SessionMenu'
 import { SessionCopyOffers } from '../components/terminal/SessionCopyOffers'
-import { emitTabClosed } from '../lib/exchange-capture'
 import { ConfirmDialog } from '@clave/ui/components'
 import { LinkedDocumentReopen } from '../components/files/LinkedDocumentReopen'
 import { AccountProposal } from '../components/terminal/AccountProposal'
@@ -126,21 +123,8 @@ function RegisteredSessionView({
     }
   }, [sessionId, transport])
   const close = async (): Promise<void> => {
-    const current = useViewSessionStore.getState()
-    const closing = current.sessions.find((s) => s.id === sessionId)
-    if (closing) emitTabClosed(closing, current.groups, 'user', null)
-    try {
-      await window.electronAPI.killSession(sessionId)
-    } catch {
-      if (isRemoteKey(sessionId)) {
-        reportFleetError(new Error('close failed'))
-        return
-      }
-      // The provider may already have exited, as in the terminal header.
-    }
-    useViewSessionStore.getState().removeSession(sessionId)
-    clearSessionDraft(sessionId)
     setShowConfirm(false)
+    await closeTab(sessionId)
   }
   // v1 describes exactly one transport. A future dual-transport record can pass
   // its PTY session id here without changing the view plugin's bridge.

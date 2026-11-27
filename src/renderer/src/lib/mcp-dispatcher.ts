@@ -19,13 +19,13 @@ import { ownSessionRef } from '../../../shared/own-session-ref'
 import { afterSpawn, withWarnings } from '../../../shared/open-after-spawn'
 import {
   captureEndpoint as captureEndpointOf,
-  emitTabClosed,
   groupOfSession,
   isCaptured,
   sessionMode,
   type SessionMode
 } from './exchange-capture'
 import { exchangeCaptureRefusal } from '../../../shared/agent-launch'
+import { closeTab } from './close-tab'
 import { useSessionStore, fileTabDedupKey, inActiveWorkspace } from '../store/session-store'
 import type {
   GroupTerminalConfig,
@@ -1111,10 +1111,11 @@ async function handleCloseSession(payload: {
   const closer = payload.callerSessionId
     ? (state.sessions.find((s) => s.id === payload.callerSessionId) ?? null)
     : null
-  emitTabClosed(session, state.groups, 'agent', closer)
-  await window.electronAPI.killSession(id)
+  // The row leaves at once (PRDCT-5315); the agent's answer waits for the
+  // stop, so a server that refuses it reaches the agent as an error.
+  const outcome = await closeTab(id, { by: 'agent', closer })
+  if (!outcome.closed) throw new Error(outcome.reason)
   messagingParents.delete(id)
-  useSessionStore.getState().removeSession(id)
   return { closed: id }
 }
 

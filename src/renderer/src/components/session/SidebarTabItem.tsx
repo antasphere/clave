@@ -1,6 +1,7 @@
 import { useCallback, type ReactNode } from 'react'
-import { cn } from '@clave/ui/components'
-import { XMarkIcon } from '@heroicons/react/24/outline'
+import { cn, Tooltip, TooltipContent, TooltipTrigger } from '@clave/ui/components'
+import { ExclamationCircleIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { useCloseError } from '../../store/close-errors-store'
 import { useInlineEdit } from '../../hooks/use-inline-edit'
 
 /** The event a row's menu opens from: a right-click, or the keyboard's menu
@@ -123,6 +124,7 @@ export function SidebarTabItem({
     if (renameable) handleButtonKeyDown(e)
   }
 
+  const closeError = useCloseError(id)
   // Dragging takes visual priority; otherwise fade dimmed (unselected) tabs.
   const itemOpacity = isDragging ? 0.3 : dimmed ? 0.55 : undefined
   const tintBackground =
@@ -180,6 +182,9 @@ export function SidebarTabItem({
         {/* Icon */}
         {icon}
 
+        {/* Its server could not close it: the mark, and why on hover. */}
+        {closeError && <CloseErrorMark reason={closeError} />}
+
         {/* Name — double-click to rename */}
         {editing ? (
           <input
@@ -232,5 +237,26 @@ export function SidebarTabItem({
       </button>
       {rowControl}
     </div>
+  )
+}
+
+/** The mark before the title of a tab whose close failed (PRDCT-5315): the
+ *  tab came back, and the tooltip says what its server answered. Closing the
+ *  tab again tries again. */
+function CloseErrorMark({ reason }: { reason: string }): React.JSX.Element {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="tab-close-error" data-testid="tab-close-error" aria-label={reason}>
+          <ExclamationCircleIcon />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="max-w-64">
+        <div>{reason}</div>
+        <div className="mt-1.5 text-text-tertiary">
+          The tab is still open. Close it again to retry.
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }
