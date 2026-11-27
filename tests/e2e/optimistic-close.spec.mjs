@@ -9,7 +9,8 @@
 // comes back at any point in the 2.5 s after, or its stand-in is never
 // stopped; or a tab whose server is gone when it is closed does not come
 // back with the mark before its title and a tooltip naming the server and
-// saying the tab is still open.
+// saying the tab is still open; or a group deleted then does not come back
+// in its place with its three tabs in their old order, each with its mark.
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { REPO } from './harness.mjs'
@@ -123,6 +124,12 @@ export async function run(t) {
     const headerChat = await start()
     const keyboardChat = await start()
     const spare = await start()
+    // A group of three chats on the server, for its Delete once the server is gone.
+    const grouped = [await start(), await start(), await start()]
+    const made = await request(server, '/sidebar/groups', {
+      windowKey: 'server',
+      group: { name: 'Order group', sessionIds: grouped.map((c) => c.id), cwd: server.root }
+    })
 
     const mac = await world.mac('close')
     await connectMac(mac, world.servers, { ui: false })
@@ -224,6 +231,48 @@ export async function run(t) {
       await win.getByText('The tab is still open. Close it again to retry.').first().isVisible()
     )
     console.log(`the mark says: ${await tooltip.textContent()}`)
+
+    // A group deleted while its server is gone comes back in its place, its
+    // tabs in their old order, each with its mark.
+    const groupedKeys = grouped.map((c) => owned('session', owner, c.id))
+    const orderOf = () =>
+      win.evaluate(
+        (keys) =>
+          [...document.querySelectorAll('[data-sidebar-item-id]')]
+            .map((e) => e.getAttribute('data-sidebar-item-id'))
+            .filter((k) => keys.includes(k))
+            .map((k) => keys.indexOf(k)),
+        groupedKeys
+      )
+    const groupKey = owned('group', owner, made.group.id)
+    await win.click(`[data-sidebar-item-id="${groupKey}"] > button`, { button: 'right' })
+    await win.locator('.menu-surface .menu-item', { hasText: 'Delete' }).click()
+    const modal = win.locator('.modal-card button', { hasText: 'Delete' })
+    if (await modal.count()) await modal.click()
+    const groupMarks = () =>
+      win
+        .locator(
+          groupedKeys
+            .map((k) => `[data-sidebar-item-id="${k}"] [data-testid="tab-close-error"]`)
+            .join(', ')
+        )
+        .count()
+    await eventually(
+      async () => (await groupMarks()) === 3,
+      'the three tabs come back with their marks'
+    )
+    await new Promise((r) => setTimeout(r, 1500))
+    t.check(
+      'a group deleted while its server is gone comes back',
+      (await win.locator(`[data-sidebar-item-id="${groupKey}"]`).count()) === 1
+    )
+    t.check('each of its tabs carries the mark', (await groupMarks()) === 3)
+    const after = await orderOf()
+    t.check(
+      'its tabs come back in their old order',
+      JSON.stringify(after) === JSON.stringify([0, 1, 2]),
+      `order after ${JSON.stringify(after)}`
+    )
     t.check('no page error', mac.errors.length === 0, mac.errors.join('\n'))
   } finally {
     await world.close()

@@ -175,3 +175,68 @@ describe('a deleted group comes back around the tabs whose close failed (PRDCT-5
     expect(restoreGroupPlace(state, place, new Set(['a']))).toBe(state)
   })
 })
+
+describe('a group already back keeps what the person made of it (PRDCT-5315, round 2)', () => {
+  const slot = (id: string, sessionId: string | null): never =>
+    ({ id, command: 'npm run dev', commandMode: 'auto', color: 'green', sessionId }) as never
+  const before = {
+    sessions: [tab('a'), tab('b'), tab('c'), tab('dev')],
+    groups: [group('g', ['a', 'b', 'c'], [slot('t', 'dev')])],
+    displayOrder: ['x', 'g']
+  }
+  const place = groupPlaceOf(before, 'g')!
+
+  it('puts a tab already in it back in the old order', () => {
+    const misplaced = {
+      sessions: [tab('a'), tab('b')],
+      groups: [group('g', ['b', 'a'])],
+      displayOrder: ['x', 'g']
+    }
+    expect(restoreGroupPlace(misplaced, place, new Set(['b'])).groups[0].sessionIds).toEqual([
+      'a',
+      'b'
+    ])
+  })
+
+  it('keeps a row the person added to it', () => {
+    const added = {
+      sessions: [tab('a'), tab('mine'), tab('c')],
+      groups: [group('g', ['a', 'mine'])],
+      displayOrder: ['g', 'c']
+    }
+    expect(restoreGroupPlace(added, place, new Set(['c'])).groups[0].sessionIds).toEqual([
+      'a',
+      'c',
+      'mine'
+    ])
+  })
+
+  it('keeps a terminal slot an earlier refusal filled', () => {
+    const filled = {
+      sessions: [tab('dev'), tab('b')],
+      groups: [group('g', [], [slot('t', 'dev')])],
+      displayOrder: ['g', 'b']
+    }
+    expect(restoreGroupPlace(filled, place, new Set(['b'])).groups[0].terminals[0].sessionId).toBe(
+      'dev'
+    )
+  })
+
+  it('keeps the place the person moved it to', () => {
+    const moved = {
+      sessions: [tab('a'), tab('c'), tab('x')],
+      groups: [group('g', ['a'])],
+      displayOrder: ['g', 'x', 'c']
+    }
+    expect(restoreGroupPlace(moved, place, new Set(['c'])).displayOrder).toEqual(['g', 'x'])
+  })
+
+  it('keeps the name the person gave it', () => {
+    const renamed = {
+      sessions: [tab('a'), tab('c')],
+      groups: [{ ...group('g', ['a']), name: 'Mine now' }],
+      displayOrder: ['g', 'c']
+    }
+    expect(restoreGroupPlace(renamed, place, new Set(['c'])).groups[0].name).toBe('Mine now')
+  })
+})

@@ -383,6 +383,68 @@ describe("a group's Delete when a server refuses a tab of it", () => {
   })
 })
 
+describe("a group's Delete when its server is gone (round 2)", () => {
+  it('the tabs come back in their old order whatever order the refusals land in', async () => {
+    const [a, b, c] = [remote('oa'), remote('ob'), remote('oc')]
+    const grp = resourceKey('group', SERVER, 'order')
+    seed([a, b, c], [{ id: grp, sessionIds: [a, b, c] }], [grp])
+    const refuse: Record<string, (e: Error) => void> = {}
+    api.killSession.mockImplementation(
+      (id: string) =>
+        new Promise<void>((_, reject) => {
+          refuse[id] = reject
+        })
+    )
+    const done = performGroupDissolve(grp, 'delete')
+    const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+    const seen: string[][] = []
+    for (const id of [a, b, c]) {
+      refuse[id](new Error('unreachable'))
+      await tick()
+      seen.push(useSessionStore.getState().groups.find((x) => x.id === grp)?.sessionIds ?? [])
+    }
+    await done
+    expect(seen).toEqual([[a], [a, b], [a, b, c]])
+    expect([a, b, c].every((id) => useCloseErrorsStore.getState().errors[id])).toBe(true)
+  })
+})
+
+describe('a tab of this Mac whose stop throws, with a page served', () => {
+  it('its serving process is stopped and dropped all the same', async () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...(tab('m') as object),
+          view: { url: 'http://localhost:5173', serverSessionId: 'm-serving' }
+        },
+        tab('m-serving')
+      ],
+      groups: [],
+      displayOrder: ['m'],
+      selectedSessionIds: [],
+      focusedSessionId: null
+    } as never)
+    api.killSession.mockImplementation(async (id: string) => {
+      if (id === 'm') throw new Error('Unknown session: m')
+    })
+    await closeTab('m')
+    expect(api.killSession.mock.calls.map((c) => c[0])).toEqual(['m', 'm-serving'])
+    expect(ids()).toEqual([])
+  })
+})
+
+describe('a mark and the other tabs', () => {
+  it('stays when another tab opens or closes', async () => {
+    const [r, other] = [remote('keep'), 'other']
+    seed([r, other], [], [r, other])
+    api.killSession.mockRejectedValueOnce(new Error('refused'))
+    await closeTab(r)
+    useSessionStore.getState().addSession(tab('newcomer'))
+    await closeTab(other)
+    expect(useCloseErrorsStore.getState().errors[r]).toBeDefined()
+  })
+})
+
 describe("an agent's close tool", () => {
   it('answers an error with the reason when the server refuses, and the tab comes back', async () => {
     const r = remote('agent')
